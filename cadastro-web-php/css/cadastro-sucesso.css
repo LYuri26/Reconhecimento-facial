@@ -1,0 +1,21 @@
+.card {
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.text-success {
+  color: var(--primary-color) !important;
+}
+
+.btn-primary {
+  background-color: var(--primary-color);
+  border-color: var(--dark-color);
+  color: var(--dark-color);
+  font-weight: bold;
+}
+
+.btn-primary:hover {
+  background-color: var(--secondary-color);
+  border-color: var(--dark-color);
+  color: var(--dark-color);
+}

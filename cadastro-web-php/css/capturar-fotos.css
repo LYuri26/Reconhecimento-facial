@@ -1,0 +1,60 @@
+.camera-container {
+  border: 3px dashed var(--dark-color);
+  border-radius: 10px;
+  background-color: var(--light-color);
+  position: relative;
+  overflow: hidden;
+}
+
+.foto-preview {
+  height: 240px;
+  border: 3px dashed var(--dark-color);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--light-color);
+  position: relative;
+}
+
+.progress-container {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  background-color: rgba(0, 0, 0, 0.7);
+  color: white;
+  padding: 5px;
+  text-align: center;
+}
+
+.progress-bar {
+  height: 10px;
+  background-color: var(--secondary-color);
+}
+
+.photo-counter {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background-color: var(--primary-color);
+  color: var(--dark-color);
+  border-radius: 50%;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+}
+
+.btn-secondary {
+  background-color: var(--dark-color);
+  color: var(--secondary-color);
+  border-color: var(--dark-color);
+}
+
+.btn-secondary:hover {
+  background-color: #333;
+  color: var(--secondary-color);
+}
