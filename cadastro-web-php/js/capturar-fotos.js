@@ -19,6 +19,7 @@ document.addEventListener("DOMContentLoaded", function () {
   let intervaloCaptura;
   let capturaAtiva = false;
   let streamAtivo = null;
+  const TOTAL_FOTOS = 20; // Total de fotos a serem capturadas
 
   // Iniciar câmera
   function iniciarCamera() {
@@ -55,8 +56,8 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // Capturar foto
   function capturarFoto() {
-    if (fotosCapturadas.length >= 20) {
-      alert("Máximo de 20 fotos atingido");
+    if (fotosCapturadas.length >= TOTAL_FOTOS) {
+      alert(`Máximo de ${TOTAL_FOTOS} fotos atingido`);
       return;
     }
 
@@ -79,6 +80,13 @@ document.addEventListener("DOMContentLoaded", function () {
                 <div class="photo-counter">${fotosCapturadas.length}</div>
             `;
 
+      // Atualizar progresso
+      const progresso = Math.round(
+        (fotosCapturadas.length / TOTAL_FOTOS) * 100
+      );
+      progressBar.style.width = `${progresso}%`;
+      contadorSpan.textContent = fotosCapturadas.length;
+
       // Habilitar botão de finalizar se tiver pelo menos 10 fotos
       if (fotosCapturadas.length >= 10) {
         btnFinalizar.disabled = false;
@@ -87,43 +95,52 @@ document.addEventListener("DOMContentLoaded", function () {
       fotoPreview.innerHTML =
         '<p class="text-muted mb-0">Nenhuma foto capturada</p>';
       btnFinalizar.disabled = true;
+      progressBar.style.width = "0%";
     }
     totalFotosSpan.textContent = fotosCapturadas.length;
   }
 
   // Iniciar captura automática
   function iniciarCapturaAutomatica() {
+    if (fotosCapturadas.length >= TOTAL_FOTOS) {
+      alert(`Máximo de ${TOTAL_FOTOS} fotos atingido`);
+      return;
+    }
+
+    capturaAtiva = true;
     progressContainer.style.display = "block";
-    let fotosRestantes = 20 - fotosCapturadas.length;
+    iniciarCapturaBtn.innerHTML =
+      '<i class="fas fa-stop me-2"></i>Parar Captura';
+
+    // Limpar qualquer intervalo existente
+    if (intervaloCaptura) {
+      clearInterval(intervaloCaptura);
+    }
+
+    // Calcular quantas fotos faltam
+    const fotosRestantes = TOTAL_FOTOS - fotosCapturadas.length;
     let fotosCapturadasNestaSessao = 0;
-    const totalParaCapturar = Math.min(20, fotosRestantes);
 
     intervaloCaptura = setInterval(() => {
-      if (fotosCapturadasNestaSessao >= totalParaCapturar) {
+      if (
+        fotosCapturadasNestaSessao >= fotosRestantes ||
+        fotosCapturadas.length >= TOTAL_FOTOS
+      ) {
         pararCapturaAutomatica();
-        iniciarCapturaBtn.innerHTML =
-          '<i class="fas fa-video me-2"></i>Captura Automática';
-        capturaAtiva = false;
         return;
       }
 
       capturarFoto();
       fotosCapturadasNestaSessao++;
-
-      // Atualizar progresso
-      const progresso = Math.round(
-        (fotosCapturadasNestaSessao / totalParaCapturar) * 100
-      );
-      contadorSpan.textContent = fotosCapturadasNestaSessao;
-      progressBar.style.width = `${progresso}%`;
-    }, 500);
+    }, 500); // Intervalo de 500ms entre fotos
   }
 
   // Parar captura automática
   function pararCapturaAutomatica() {
+    capturaAtiva = false;
     clearInterval(intervaloCaptura);
-    progressContainer.style.display = "none";
-    progressBar.style.width = "0%";
+    iniciarCapturaBtn.innerHTML =
+      '<i class="fas fa-video me-2"></i>Captura Automática';
   }
 
   // Event Listeners
@@ -132,19 +149,9 @@ document.addEventListener("DOMContentLoaded", function () {
   iniciarCapturaBtn.addEventListener("click", function () {
     if (capturaAtiva) {
       pararCapturaAutomatica();
-      iniciarCapturaBtn.innerHTML =
-        '<i class="fas fa-video me-2"></i>Captura Automática';
     } else {
-      if (fotosCapturadas.length >= 20) {
-        alert("Máximo de 20 fotos atingido");
-        return;
-      }
-
       iniciarCapturaAutomatica();
-      iniciarCapturaBtn.innerHTML =
-        '<i class="fas fa-stop me-2"></i>Parar Captura';
     }
-    capturaAtiva = !capturaAtiva;
   });
 
   reiniciarBtn.addEventListener("click", function () {
@@ -153,9 +160,6 @@ document.addEventListener("DOMContentLoaded", function () {
 
     if (capturaAtiva) {
       pararCapturaAutomatica();
-      iniciarCapturaBtn.innerHTML =
-        '<i class="fas fa-video me-2"></i>Captura Automática';
-      capturaAtiva = false;
     }
   });
 
