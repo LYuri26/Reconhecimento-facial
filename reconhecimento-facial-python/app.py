@@ -10,60 +10,45 @@ class App:
         self.config = Config()
         self.window_name = "Menu Principal - Catraca Inteligente"
         self.options = [
-            {"text": "1 - Câmera de Entrada", "action": self._start_entrada},
-            {"text": "2 - Câmera de Saída", "action": self._start_saida},
-            {"text": "Q - Sair", "action": self._quit},
+            {"text": "1 - Modulo de Entrada", "action": self._start_entrada},
+            {"text": "2 - Modulo de Saida", "action": self._start_saida},
+            {"text": "Q - Encerrar Sistema", "action": self._quit},
         ]
         self.selected_index = 0
 
     def run(self):
+        """Método principal para execucao do menu."""
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(self.window_name, *self.config.DEFAULT_WINDOW_SIZE)
 
         while True:
-            # Cria o frame do menu
             frame = self._create_menu_frame()
-
-            # Exibe o frame
             cv2.imshow(self.window_name, frame)
 
             key = cv2.waitKey(1) & 0xFF
-            if key == ord("q"):
-                break
-            elif key == 13:  # Enter
-                self.options[self.selected_index]["action"]()
-            elif key == ord("1"):
-                self._start_entrada()
-            elif key == ord("2"):
-                self._start_saida()
-            elif key == 82:  # Seta para cima
-                self.selected_index = max(0, self.selected_index - 1)
-            elif key == 84:  # Seta para baixo
-                self.selected_index = min(
-                    len(self.options) - 1, self.selected_index + 1
-                )
+            self._handle_key_input(key)
 
         cv2.destroyAllWindows()
 
     def _create_menu_frame(self):
-        """Cria o frame do menu com as opções"""
+        """Renderiza o frame do menu com estilizacao."""
         frame = np.full((600, 800, 3), 240, dtype=np.uint8)  # Fundo cinza claro
 
-        # Título
+        # Titulo principal (ajustado para responsividade)
         cv2.putText(
             frame,
-            "CATRACA INTELIGENTE",
-            (250, 100),
+            "CONTROLE DE ACESSO POR RECONHECIMENTO FACIAL",
+            (50, 80),  # Posicao mais à esquerda e acima
             self.config.FONT,
-            1.5,
+            0.7,  # Fonte menor
             self.config.COLORS["dark"],
             self.config.FONT_THICKNESS,
             cv2.LINE_AA,
         )
 
-        # Opções
+        # Opcoes do menu
         for i, option in enumerate(self.options):
-            y_pos = 200 + i * 100
+            y_pos = 180 + i * 100
             color = (
                 self.config.COLORS["primary"]
                 if i == self.selected_index
@@ -72,7 +57,7 @@ class App:
             cv2.putText(
                 frame,
                 option["text"],
-                (300, y_pos),
+                (250, y_pos),
                 self.config.FONT,
                 self.config.FONT_SCALE,
                 color,
@@ -80,11 +65,11 @@ class App:
                 cv2.LINE_AA,
             )
 
-        # Instruções
+        # Instrucões de uso
         cv2.putText(
             frame,
-            "Use as setas para navegar e Enter para selecionar",
-            (150, 500),
+            "Navegacao: Teclas cima/baixo ou numeros 1/2",
+            (180, 480),
             self.config.FONT,
             0.6,
             self.config.COLORS["dark"],
@@ -93,8 +78,8 @@ class App:
         )
         cv2.putText(
             frame,
-            "Ou pressione 1, 2 ou Q diretamente",
-            (250, 530),
+            "Selecao: Tecla Enter | Saida: Tecla Q",
+            (200, 510),
             self.config.FONT,
             0.6,
             self.config.COLORS["dark"],
@@ -104,25 +89,43 @@ class App:
 
         return frame
 
+    def _handle_key_input(self, key):
+        """Gerencia as entradas do teclado."""
+        if key == ord("q"):
+            self._quit()
+        elif key == 13:  # Enter
+            self.options[self.selected_index]["action"]()
+        elif key == ord("1"):
+            self._start_entrada()
+        elif key == ord("2"):
+            self._start_saida()
+        elif key == 82:  # Seta para cima
+            self.selected_index = max(0, self.selected_index - 1)
+        elif key == 84:  # Seta para baixo
+            self.selected_index = min(len(self.options) - 1, self.selected_index + 1)
+
     def _start_entrada(self):
+        """Inicia o modulo de entrada."""
         cv2.destroyWindow(self.window_name)
-        camera = CameraEntrada()
-        camera.run()
-        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(self.window_name, *self.config.DEFAULT_WINDOW_SIZE)
+        CameraEntrada().run()
+        self._reopen_menu()
 
     def _start_saida(self):
+        """Inicia o modulo de saida."""
         cv2.destroyWindow(self.window_name)
-        camera = CameraSaida()
-        camera.run()
+        CameraSaida().run()
+        self._reopen_menu()
+
+    def _reopen_menu(self):
+        """Reabre o menu apos encerrar um modulo."""
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(self.window_name, *self.config.DEFAULT_WINDOW_SIZE)
 
     def _quit(self):
+        """Encerra o aplicativo com codigo de saida 0."""
         cv2.destroyAllWindows()
-        exit()
+        exit(0)
 
 
 if __name__ == "__main__":
-    app = App()
-    app.run()
+    App().run()

@@ -10,22 +10,22 @@ import sys
 
 class CameraSaida:
     def __init__(self, camera_id=0):
-        print("⏳ Inicializando câmera de saída...")
+        print("⏳ Inicializando modulo de saida...")
         self.config = Config()
         self.db_ops = DBOperations(self.config.DB_CONFIG)
         self.face_detector = FaceDetector()
         self.face_recognizer = FaceRecognizer()
         self.camera_id = camera_id
-        self.window_name = f"{self.config.WINDOW_TITLE} - Saída"
+        self.window_name = f"{self.config.WINDOW_TITLE} - Saida"
         self.last_access = {}
         self.show_info = True
 
         if not self.db_ops.connect():
-            print("❌ Falha crítica: Não foi possível conectar ao banco de dados")
+            print("❌ Falha critica: Nao foi possível conectar ao banco de dados")
             sys.exit(1)
 
         if not self.load_known_faces():
-            print("⚠️ Atenção: Nenhum rosto conhecido carregado")
+            print("⚠️ Atencao: Nenhum rosto conhecido carregado")
 
         print("✅ Sistema inicializado com sucesso")
 
@@ -35,7 +35,7 @@ class CameraSaida:
             known_faces_data = self.db_ops.get_all_known_faces()
             if known_faces_data:
                 self.face_recognizer.load_known_faces(known_faces_data)
-                print(f"✅ {len(known_faces_data)} rostos carregados para saída")
+                print(f"✅ {len(known_faces_data)} rostos carregados para saida")
                 return True
             return False
         except Exception as e:
@@ -43,15 +43,15 @@ class CameraSaida:
             return False
 
     def run(self):
-        """Executa o loop principal da câmera de saída"""
-        print("🔍 Tentando abrir a câmera...")
+        """Executa o loop principal da camera de saida"""
+        print("🔍 Tentando abrir a camera...")
         cap = cv2.VideoCapture(self.camera_id)
 
         if not cap.isOpened():
             print(
-                f"❌ Falha crítica: Não foi possível acessar a câmera (ID: {self.camera_id})"
+                f"❌ Falha crítica: Nao foi possível acessar a camera (ID: {self.camera_id})"
             )
-            print("👉 Solução: Verifique se a câmera está conectada e disponível")
+            print("👉 Solucao: Verifique se a camera esta conectada e disponivel")
             sys.exit(1)
 
         print("\n✅ Câmera de saída iniciada. Monitorando saídas...")
@@ -91,10 +91,10 @@ class CameraSaida:
             cap.release()
             cv2.destroyAllWindows()
             self.db_ops.close()
-            print("✅ Câmera de saída encerrada")
+            print("✅ Camera de saida encerrada")
 
     def _resize_frame(self, frame):
-        """Redimensiona o frame para se adaptar à tela"""
+        """Redimensiona o frame para se adaptar a tela"""
         screen_width = 1920  # Ajuste conforme necessário
         screen_height = 1080
         h, w = frame.shape[:2]
@@ -111,7 +111,7 @@ class CameraSaida:
         return frame
 
     def _register_accesses(self, results):
-        """Registra saídas válidas"""
+        """Registra saidas validas"""
         for result in results:
             if (
                 result["user_id"]
@@ -129,7 +129,7 @@ class CameraSaida:
 
                     if self._register_access(result, "saida"):
                         self.last_access[user_id] = current_time
-                        print(f"👤 Saída registrada: {result['name']} (ID: {user_id})")
+                        print(f"👤 Saida registrada: {result['name']} (ID: {user_id})")
 
     def _register_access(self, result, direction):
         try:
@@ -141,7 +141,7 @@ class CameraSaida:
                 confidence=confidence_percent,
             )
         except Exception as e:
-            print(f"❌ Erro ao registrar saída: {e}")
+            print(f"❌ Erro ao registrar saida: {e}")
             return False
 
     def _add_ui_elements(self, frame, results):
@@ -163,8 +163,8 @@ class CameraSaida:
         if self.show_info:
             info_text = [
                 f"Pessoas detectadas: {len(results)}",
-                f"Modo: Saída",
-                "Pressione 'i' para ocultar informações",
+                f"Modo: Saida",
+                "Pressione 'i' para ocultar informacoes",
                 "Pressione 'q' para voltar ao menu",
             ]
 
@@ -221,7 +221,7 @@ class CameraSaida:
 
 if __name__ == "__main__":
     print("=" * 50)
-    print("SISTEMA DE RECONHECIMENTO FACIAL - SAÍDA")
+    print("SISTEMA DE RECONHECIMENTO FACIAL - SAIDA")
     print("=" * 50)
 
     try:

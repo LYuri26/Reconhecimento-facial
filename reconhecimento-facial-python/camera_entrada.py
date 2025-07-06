@@ -27,12 +27,14 @@ class CameraEntrada:
         known_faces_data = self.db_ops.get_all_known_faces()
         if known_faces_data:
             self.face_recognizer.load_known_faces(known_faces_data)
-            print(f"✅ {len(known_faces_data)} rostos carregados para entrada")
+            print(
+                f"✅ {len(known_faces_data)} rostos cadastrados carregados para entrada"
+            )
 
     def run(self):
         cap = cv2.VideoCapture(self.camera_id)
         if not cap.isOpened():
-            print(f"❌ Não foi possível acessar a câmera (ID: {self.camera_id})")
+            print(f"❌ Nao foi possivel acessar a camera (ID: {self.camera_id})")
             return
 
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
@@ -45,7 +47,7 @@ class CameraEntrada:
                     print("⚠️ Erro ao capturar frame")
                     break
 
-                # Redimensiona o frame para se adaptar à tela
+                # Redimensiona o frame para se adaptar a tela
                 frame = self._resize_frame(frame)
 
                 # Processa o frame
@@ -71,18 +73,18 @@ class CameraEntrada:
             cap.release()
             cv2.destroyAllWindows()
             self.db_ops.close()
-            print("✅ Câmera de entrada encerrada")
+            print("✅ camera de entrada encerrada")
 
     def _resize_frame(self, frame):
-        """Redimensiona o frame para se adaptar à tela"""
+        """Redimensiona o frame para se adaptar a tela"""
         screen_width = 1920  # Ajuste conforme necessário
         screen_height = 1080
         h, w = frame.shape[:2]
 
-        # Calcula a proporção de redimensionamento
+        # Calcula a proporcao de redimensionamento
         scale = min(screen_width / w, screen_height / h)
 
-        # Redimensiona mantendo a proporção
+        # Redimensiona mantendo a proporcao
         if scale < 1:
             frame = cv2.resize(
                 frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA
@@ -141,12 +143,12 @@ class CameraEntrada:
             value=self.config.COLORS["primary"],
         )
 
-        # Informações na tela
+        # InformacOes na tela
         if self.show_info:
             info_text = [
                 f"Pessoas detectadas: {len(results)}",
                 f"Modo: Entrada",
-                "Pressione 'i' para ocultar informações",
+                "Pressione 'i' para ocultar informacoes",
                 "Pressione 'q' para voltar ao menu",
             ]
 
@@ -163,7 +165,7 @@ class CameraEntrada:
                     cv2.LINE_AA,
                 )
 
-        # Desenha detecções
+        # Desenha deteccoes
         for result in results:
             (x1, y1, x2, y2) = result["location"]
             name = result["name"]
