@@ -25,10 +25,14 @@ class FaceRecognizer:
         total_faces = 0
 
         for pessoa in pessoas:
-            full_path = self.config.get_full_path(pessoa["Pasta"])
+            full_path = self.config.get_full_path(
+                pessoa.folder
+            )  # Alterado para pessoa.folder
 
             if not os.path.exists(full_path):
-                print(f"⚠️ Pasta não encontrada para {pessoa['Nome']}: {full_path}")
+                print(
+                    f"⚠️ Pasta não encontrada para {pessoa.name}: {full_path}"
+                )  # Alterado para pessoa.name
                 continue
 
             for file in os.listdir(full_path):
@@ -45,8 +49,10 @@ class FaceRecognizer:
                         face = gray[y : y + h, x : x + w]
                         face = cv2.resize(face, self.config.FACE_IMAGE_SIZE)
                         self.known_faces.append(face)
-                        self.known_names.append(pessoa["Nome"])
-                        self.known_ids.append(pessoa["ID"])
+                        self.known_names.append(
+                            pessoa.name
+                        )  # Alterado para pessoa.name
+                        self.known_ids.append(pessoa.id)  # Alterado para pessoa.id
                         total_faces += 1
 
         print(f"✅ {total_faces} rostos carregados de {len(pessoas)} pessoas")

@@ -1,6 +1,6 @@
 import mysql.connector
 from mysql.connector import Error
-from .models import Person
+from .models import Person  # Import relativo corrigido
 
 
 class DBOperations:
@@ -33,7 +33,7 @@ class DBOperations:
                 print("⚠️ Nenhuma pessoa ativa cadastrada no banco de dados")
                 return None
 
-            return pessoas
+            return [Person(p["ID"], p["Nome"], p["Pasta"]) for p in pessoas]
         except Exception as e:
             print(f"❌ Erro ao carregar rostos: {e}")
             return None
@@ -47,32 +47,25 @@ class DBOperations:
             cursor.execute(
                 """
                 INSERT INTO Acessos 
-                (user_id, nome_pessoa, tipo_acesso, confianca, metodo_autenticacao) 
-                VALUES (%s, %s, %s, %s, %s)
+                (user_id, nome_pessoa, tipo_acesso, confianca) 
+                VALUES (%s, %s, %s, %s)
                 """,
-                (user_id, name, direction, confidence, "facial"),
+                (user_id, name, direction, confidence),
             )
 
             # Registra na tabela LogsSeguranca
             cursor.execute(
                 """
                 INSERT INTO LogsSeguranca 
-                (tipo_evento, descricao, user_id, severidade) 
-                VALUES (%s, %s, %s, %s)
+                (tipo_evento, descricao, user_id) 
+                VALUES (%s, %s, %s)
                 """,
-                (
-                    "acesso",
-                    f"Acesso de {direction} registrado para {name}",
-                    user_id,
-                    "info",
-                ),
+                ("acesso", f"Acesso {direction} - {name} (ID: {user_id})", user_id),
             )
 
             self.connection.commit()
             cursor.close()
-            print(
-                f"✅ Acesso registrado: {direction.upper()} - {name} (Confiança: {confidence:.2f}%)"
-            )
+            print(f"✅ Acesso registrado: {direction.upper()} - {name} (ID: {user_id})")
             return True
         except Error as e:
             print(f"❌ Erro ao registrar acesso: {e}")
