@@ -1,74 +1,64 @@
 import cv2
-import face_recognition
-import pickle
+import numpy as np
 import os
-from utils.mysql_utils import MySQLUtils
 
 
-class FacialRecognition:
+class FacialRecognizer:
     def __init__(self):
-        self.db = MySQLUtils()
-        self.db.connect()
-        self.known_encodings = []
+        self.face_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        )
+        self.known_faces = []
         self.known_names = []
-        self.load_encodings()
+        self.threshold = 0.6
 
-    def load_encodings(self):
+    def load_known_faces(self, faces_dir="USUARIO"):
         try:
-            with open("modelos/encodings.pkl", "rb") as f:
-                data = pickle.load(f)
-                self.known_encodings = data["encodings"]
-                self.known_names = data["names"]
-        except FileNotFoundError:
-            self.update_encodings()
-
-    def update_encodings(self):
-        cursor = self.db.connection.cursor(dictionary=True)
-        cursor.execute("SELECT Nome, Foto FROM Pessoas WHERE Foto IS NOT NULL")
-
-        encodings = []
-        names = []
-
-        for row in cursor:
-            image_path = os.path.join(
-                "cadastro-web-php/imagens/rostos_salvos", row["Foto"]
-            )
-            if os.path.exists(image_path):
-                image = face_recognition.load_image_file(image_path)
-                face_locations = face_recognition.face_locations(image)
-                if face_locations:
-                    encoding = face_recognition.face_encodings(image, face_locations)[0]
-                    encodings.append(encoding)
-                    names.append(row["Nome"])
-
-        data = {"encodings": encodings, "names": names}
-        with open("modelos/encodings.pkl", "wb") as f:
-            pickle.dump(data, f)
-
-        self.known_encodings = encodings
-        self.known_names = names
-        cursor.close()
+            for name in os.listdir(faces_dir):
+                user_dir = os.path.join(faces_dir, name)
+                if os.path.isdir(user_dir):
+                    for file in os.listdir(user_dir):
+                        img_path = os.path.join(user_dir, file)
+                        img = cv2.imread(img_path)
+                        if img is None:
+                            continue
+                        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                        faces = self.face_cascade.detectMultiScale(gray, 1.3, 5)
+                        for x, y, w, h in faces:
+                            face = gray[y : y + h, x : x + w]
+                            face = cv2.resize(face, (100, 100))
+                            self.known_faces.append(face)
+                            self.known_names.append(name)
+            return True
+        except Exception as e:
+            print(f"Erro ao carregar rostos: {e}")
+            return False
 
     def recognize_face(self, frame):
-        small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
-        rgb_small_frame = small_frame[:, :, ::-1]
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = self.face_cascade.detectMultiScale(gray, 1.3, 5)
 
-        face_locations = face_recognition.face_locations(rgb_small_frame)
-        face_encodings = face_recognition.face_encodings(
-            rgb_small_frame, face_locations
-        )
+        results = []
+        for x, y, w, h in faces:
+            face = gray[y : y + h, x : x + w]
+            face = cv2.resize(face, (100, 100))
 
-        names = []
-        for face_encoding in face_encodings:
-            matches = face_recognition.compare_faces(
-                self.known_encodings, face_encoding
+            best_match = None
+            best_score = 0
+
+            for i, known_face in enumerate(self.known_faces):
+                score = np.mean(np.abs(face - known_face))
+                if score > best_score:
+                    best_score = score
+                    best_match = self.known_names[i]
+
+            name = best_match if best_score > self.threshold else "Desconhecido"
+            results.append(
+                {
+                    "location": (x, y, x + w, y + h),
+                    "name": name,
+                    "confidence": best_score,
+                }
             )
-            name = "Desconhecido"
 
-            if True in matches:
-                first_match_index = matches.index(True)
-                name = self.known_names[first_match_index]
-
-            names.append(name)
-
-        return face_locations, names
+        return results
