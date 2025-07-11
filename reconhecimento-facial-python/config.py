@@ -13,13 +13,14 @@ class Config:
         self.WINDOW_TITLE = "Reconhecimento Facial"
         self.DEFAULT_WINDOW_SIZE = (800, 600)
         self.BORDER_SIZE = 10
+        # Adicione/modifique estas cores no Config
         self.COLORS = {
             "primary": (0, 119, 200),
             "secondary": (0, 180, 216),
             "success": (0, 200, 83),
-            "warning": (0, 200, 200),
-            "orange": (0, 165, 255),
-            "danger": (0, 0, 255),
+            "warning": (0, 255, 255),  # Amarelo
+            "orange": (0, 165, 255),  # Laranja
+            "danger": (0, 0, 255),  # Vermelho
             "dark": (50, 50, 50),
             "light": (240, 240, 240),
         }

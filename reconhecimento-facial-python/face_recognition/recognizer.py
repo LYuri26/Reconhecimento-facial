@@ -1,12 +1,14 @@
+# recognizer.py (ajustado para usar imagem temporária no reconhecimento e debug de vetores)
 import cv2
 import numpy as np
 import os
 import pickle
 import time
+import tempfile
+from PIL import Image
 from config import Config
 from typing import List, Dict, Optional, Tuple
 
-# Verifica disponibilidade do DeepFace
 try:
     from deepface import DeepFace
 
@@ -37,7 +39,7 @@ class FaceRecognizer:
         self.knn_classifier: Optional[KNeighborsClassifier] = None
         self.recognition_threshold = self.config.FACE_RECOGNITION_THRESHOLD
 
-    def load_known_faces(self, pessoas: List[Dict]) -> bool:
+    def load_known_faces(self, pessoas: List) -> bool:
         print("⏳ Carregando rostos conhecidos...")
         start_time = time.time()
 
@@ -58,21 +60,22 @@ class FaceRecognizer:
                     print(f"⚠️ Pasta não encontrada: {full_path}")
                     continue
 
+                print(f"📁 Processando pasta de {pessoa.name}: {full_path}")
+
                 for file in os.listdir(full_path):
                     if file.lower().endswith((".png", ".jpg", ".jpeg")):
                         img_path = os.path.join(full_path, file)
+                        print(f"📷 Tentando processar imagem: {img_path}")
                         self._process_face_image(img_path, pessoa)
 
-            if len(self.known_encodings) > 0:
-                print(f"✅ {len(self.known_encodings)} rostos carregados")
+                print(
+                    f"🧠 Rostos carregados para {pessoa.name}: {len(self.known_encodings)}"
+                )
 
+            if len(self.known_encodings) > 0:
+                print(f"✅ Total de embeddings: {len(self.known_encodings)}")
                 if SKLEARN_AVAILABLE:
                     self._train_classifier()
-                else:
-                    print(
-                        "⚠️ scikit-learn não disponível - usando reconhecimento básico"
-                    )
-
                 elapsed = time.time() - start_time
                 print(f"⏱ Tempo total: {elapsed:.2f}s")
                 return True
@@ -84,15 +87,13 @@ class FaceRecognizer:
             print(f"❌ Erro ao carregar rostos: {str(e)}")
             return False
 
-    def _process_face_image(self, img_path: str, pessoa: Dict):
-        """Processa uma imagem de rosto usando DeepFace"""
+    def _process_face_image(self, img_path: str, pessoa) -> None:
         try:
-            # Extrai embedding usando DeepFace (Facenet por padrão)
             embedding = DeepFace.represent(
                 img_path=img_path,
-                model_name=self.config.RECOGNITION_MODEL,  # Ex: "Facenet", "VGG-Face", etc.
-                enforce_detection=False,  # Não falha se não detectar rosto
-                detector_backend="opencv",  # Usa OpenCV para detecção
+                model_name=self.config.RECOGNITION_MODEL,
+                enforce_detection=False,
+                detector_backend="opencv",
             )
 
             if embedding:
@@ -100,12 +101,16 @@ class FaceRecognizer:
                 self.known_names.append(pessoa.name)
                 self.known_ids.append(pessoa.id)
                 self.known_danger_levels.append(pessoa.danger_level)
-
+                print(f"✅ Embedding gerado para {pessoa.name}")
+                print(
+                    f"[DEBUG] Embedding treino {pessoa.name}: {embedding[0]['embedding'][:5]}"
+                )
+            else:
+                print(f"⚠️ Nenhum embedding retornado para {img_path}")
         except Exception as e:
-            print(f"⚠️ Erro ao processar {img_path}: {str(e)}")
+            print(f"❌ Erro ao processar imagem {img_path}: {str(e)}")
 
     def recognize_faces(self, frame: np.ndarray, faces: List[Tuple]) -> List[Dict]:
-        """Reconhece faces usando DeepFace"""
         results = []
 
         if not DEEPFACE_AVAILABLE:
@@ -114,29 +119,29 @@ class FaceRecognizer:
         for x, y, w, h in faces:
             try:
                 face_img = frame[y : y + h, x : x + w]
+                face_img_rgb = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
 
-                # Salva temporariamente para o DeepFace processar
-                temp_path = "temp_face.jpg"
-                cv2.imwrite(temp_path, face_img)
-
-                # Obtém embedding da face detectada
-                embedding = DeepFace.represent(
-                    img_path=temp_path,
-                    model_name=self.config.RECOGNITION_MODEL,
-                    enforce_detection=False,
-                    detector_backend="skip",  # Pula detecção (já detectamos)
-                )
+                with tempfile.NamedTemporaryFile(
+                    suffix=".jpg", delete=False
+                ) as tmp_file:
+                    Image.fromarray(face_img_rgb).save(tmp_file.name)
+                    embedding = DeepFace.represent(
+                        img_path=tmp_file.name,
+                        model_name=self.config.RECOGNITION_MODEL,
+                        enforce_detection=False,
+                        detector_backend="opencv",
+                    )
+                    os.remove(tmp_file.name)
 
                 if embedding:
-                    results.append(
-                        self._process_embedding(embedding[0]["embedding"], (x, y, w, h))
+                    print(f"[DEBUG] Embedding ao vivo: {embedding[0]['embedding'][:5]}")
+                    result = self._process_embedding(
+                        embedding[0]["embedding"], (x, y, w, h)
                     )
+                    print(f"🔍 Resultado: {result}")
+                    results.append(result)
                 else:
                     results.append(self._unknown_face((x, y, w, h)))
-
-                # Remove arquivo temporário
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
 
             except Exception as e:
                 print(f"⚠️ Erro no reconhecimento: {str(e)}")
@@ -144,15 +149,7 @@ class FaceRecognizer:
 
         return results
 
-        # Otimiza periodicamente o classificador
-        if time.time() - self.last_optimization_time > 3600:  # A cada hora
-            self._optimize_classifier()
-            self.last_optimization_time = time.time()
-
-        return results
-
     def _process_embedding(self, embedding: np.ndarray, location: Tuple) -> Dict:
-        """Processa um embedding para reconhecimento"""
         if not SKLEARN_AVAILABLE or not self.knn_classifier:
             return self._unknown_face(location)
 
@@ -185,7 +182,6 @@ class FaceRecognizer:
             return self._unknown_face(location)
 
     def _unknown_face(self, location: Tuple) -> Dict:
-        """Retorna um resultado para face desconhecida"""
         return {
             "location": (
                 location[0],
@@ -200,67 +196,9 @@ class FaceRecognizer:
         }
 
     def _basic_recognition(self, faces: List[Tuple]) -> List[Dict]:
-        """Método básico de reconhecimento quando DeepFace não está disponível"""
         return [self._unknown_face(face) for face in faces]
 
-    def _optimize_classifier(self):
-        """Otimiza o classificador periodicamente"""
-        try:
-            if SKLEARN_AVAILABLE and len(self.known_encodings) > 100:
-                print("⏳ Otimizando classificador...")
-                self.knn_classifier = KNeighborsClassifier(
-                    n_neighbors=min(5, len(self.known_encodings) // 20),
-                    metric="cosine",
-                    weights="distance",
-                )
-                encoded_labels = self.label_encoder.transform(self.known_names)
-                self.knn_classifier.fit(self.known_encodings, encoded_labels)
-        except Exception as e:
-            print(f"⚠️ Erro ao otimizar classificador: {str(e)}")
-
-    def save_model(self, path: str = "models/face_recognition_model.pkl") -> bool:
-        """Salva o modelo treinado"""
-        try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "wb") as f:
-                pickle.dump(
-                    {
-                        "encodings": self.known_encodings,
-                        "names": self.known_names,
-                        "ids": self.known_ids,
-                        "danger_levels": self.known_danger_levels,
-                        "label_encoder": self.label_encoder,
-                        "classifier": self.knn_classifier,
-                        "threshold": self.recognition_threshold,
-                    },
-                    f,
-                )
-            print(f"💾 Modelo salvo em {path}")
-            return True
-        except Exception as e:
-            print(f"❌ Erro ao salvar modelo: {str(e)}")
-            return False
-
-    def load_model(self, path: str = "models/face_recognition_model.pkl") -> bool:
-        """Carrega um modelo previamente treinado"""
-        try:
-            with open(path, "rb") as f:
-                data = pickle.load(f)
-                self.known_encodings = data["encodings"]
-                self.known_names = data["names"]
-                self.known_ids = data["ids"]
-                self.known_danger_levels = data["danger_levels"]
-                self.label_encoder = data["label_encoder"]
-                self.knn_classifier = data["classifier"]
-                self.recognition_threshold = data.get("threshold", 0.6)
-            print(f"♻️ Modelo carregado de {path}")
-            return True
-        except Exception as e:
-            print(f"❌ Erro ao carregar modelo: {str(e)}")
-            return False
-
     def _train_classifier(self):
-        """Treina o classificador KNN com os rostos conhecidos"""
         try:
             if SKLEARN_AVAILABLE and len(self.known_encodings) > 0:
                 print("⏳ Treinando classificador...")
@@ -272,4 +210,3 @@ class FaceRecognizer:
                 print("✅ Classificador treinado com sucesso")
         except Exception as e:
             print(f"❌ Erro ao treinar classificador: {str(e)}")
-            self.knn_classifier = None

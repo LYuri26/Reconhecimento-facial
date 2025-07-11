@@ -160,9 +160,11 @@ class CameraEntrada:
             return False
 
     def _add_ui_elements(self, frame, results):
-        """Adiciona elementos de interface ao frame"""
+        """Adiciona elementos de interface ao frame com melhor desempenho"""
         try:
             h, w = frame.shape[:2]
+
+            # Desenha borda colorida ao redor do frame
             frame = cv2.copyMakeBorder(
                 frame,
                 self.config.BORDER_SIZE,
@@ -173,28 +175,6 @@ class CameraEntrada:
                 value=self.config.COLORS["primary"],
             )
 
-            if self.show_info:
-                info_text = [
-                    f"Pessoas detectadas: {len(results)}",
-                    "Pressione 'i' para ocultar/mostrar informações",
-                    "Pressione 'q' para sair",
-                    "Pressione 's' para salvar estado",
-                    "Pressione 'l' para carregar estado",
-                ]
-
-                for i, text in enumerate(info_text):
-                    y_pos = 30 + i * 30
-                    cv2.putText(
-                        frame,
-                        text,
-                        (10, y_pos),
-                        self.config.FONT,
-                        0.6,
-                        self.config.COLORS["light"],
-                        1,
-                        cv2.LINE_AA,
-                    )
-
             for result in results:
                 (x1, y1, x2, y2) = result["location"]
                 x1 += self.config.BORDER_SIZE
@@ -202,26 +182,31 @@ class CameraEntrada:
                 x2 += self.config.BORDER_SIZE
                 y2 += self.config.BORDER_SIZE
 
-                # Define a cor baseado no nível de perigo
                 color = self._get_danger_color(result.get("danger_level", "BAIXO"))
+                thickness = max(1, min(4, int(result.get("confidence", 0) * 4)))
 
-                # Desenha retângulo ao redor do rosto
-                thickness = 2 if result["name"] == "Desconhecido" else 3
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
 
                 if result["name"] != "Desconhecido":
-                    # Desenha fundo do texto apenas para conhecidos
-                    cv2.rectangle(frame, (x1, y1 - 60), (x2, y1), color, -1)
+                    label = f"{result['name']} ({result.get('danger_level', 'BAIXO')})"
+                    confidence = f"{result['confidence']*100:.1f}%"
 
-                    # Texto com nome e nível de perigo
-                    label_name = f"{result['name']}"
-                    label_danger = f"Perigo: {result.get('danger_level', 'BAIXO')}"
-                    label_confidence = f"Confiança: {result['confidence']:.2f}"
+                    (text_width, text_height), _ = cv2.getTextSize(
+                        label, self.config.FONT, 0.6, 1
+                    )
+
+                    cv2.rectangle(
+                        frame,
+                        (x1, y1 - text_height - 10),
+                        (x1 + text_width + 10, y1),
+                        color,
+                        -1,
+                    )
 
                     cv2.putText(
                         frame,
-                        label_name,
-                        (x1 + 5, y1 - 40),
+                        label,
+                        (x1 + 5, y1 - 5),
                         self.config.FONT,
                         0.6,
                         self.config.COLORS["light"],
@@ -231,11 +216,11 @@ class CameraEntrada:
 
                     cv2.putText(
                         frame,
-                        label_danger,
-                        (x1 + 5, y1 - 20),
+                        confidence,
+                        (x1 + 5, y2 + 20),
                         self.config.FONT,
                         0.5,
-                        self.config.COLORS["light"],
+                        color,
                         1,
                         cv2.LINE_AA,
                     )
@@ -253,7 +238,7 @@ class CameraEntrada:
                 return self.config.COLORS["danger"]
             elif danger_level == "MEDIO":
                 return self.config.COLORS["orange"]
-            else:  # BAIXO
+            else:
                 return self.config.COLORS["warning"]
         except:
             return self.config.COLORS["warning"]
