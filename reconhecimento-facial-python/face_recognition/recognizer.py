@@ -6,14 +6,15 @@ import time
 from config import Config
 from typing import List, Dict, Optional, Tuple
 
-# Verifica disponibilidade de bibliotecas
+# Verifica disponibilidade do DeepFace
 try:
-    import face_recognition
+    from deepface import DeepFace
 
-    FACE_RECOG_AVAILABLE = True
+    DEEPFACE_AVAILABLE = True
+    print("✅ DeepFace carregado com sucesso")
 except ImportError as e:
-    print(f"⚠️ face_recognition não disponível: {str(e)}")
-    FACE_RECOG_AVAILABLE = False
+    print(f"❌ DeepFace não disponível: {str(e)}")
+    DEEPFACE_AVAILABLE = False
 
 try:
     from sklearn.neighbors import KNeighborsClassifier
@@ -37,7 +38,6 @@ class FaceRecognizer:
         self.recognition_threshold = self.config.FACE_RECOGNITION_THRESHOLD
 
     def load_known_faces(self, pessoas: List[Dict]) -> bool:
-        """Carrega rostos conhecidos do banco de dados"""
         print("⏳ Carregando rostos conhecidos...")
         start_time = time.time()
 
@@ -46,8 +46,8 @@ class FaceRecognizer:
         self.known_ids = []
         self.known_danger_levels = []
 
-        if not FACE_RECOG_AVAILABLE:
-            print("⚠️ face_recognition não disponível - usando reconhecimento básico")
+        if not DEEPFACE_AVAILABLE:
+            print("⚠️ DeepFace não disponível - usando reconhecimento básico")
             return False
 
         try:
@@ -63,13 +63,18 @@ class FaceRecognizer:
                         img_path = os.path.join(full_path, file)
                         self._process_face_image(img_path, pessoa)
 
-            if self.known_encodings:
+            if len(self.known_encodings) > 0:
+                print(f"✅ {len(self.known_encodings)} rostos carregados")
+
                 if SKLEARN_AVAILABLE:
                     self._train_classifier()
+                else:
+                    print(
+                        "⚠️ scikit-learn não disponível - usando reconhecimento básico"
+                    )
+
                 elapsed = time.time() - start_time
-                print(
-                    f"✅ {len(self.known_encodings)} rostos carregados em {elapsed:.2f}s"
-                )
+                print(f"⏱ Tempo total: {elapsed:.2f}s")
                 return True
 
             print("⚠️ Nenhum rosto válido encontrado")
@@ -80,24 +85,18 @@ class FaceRecognizer:
             return False
 
     def _process_face_image(self, img_path: str, pessoa: Dict):
-        """Processa uma imagem de rosto e extrai características"""
+        """Processa uma imagem de rosto usando DeepFace"""
         try:
-            img = cv2.imread(img_path)
-            if img is None:
-                return
+            # Extrai embedding usando DeepFace (Facenet por padrão)
+            embedding = DeepFace.represent(
+                img_path=img_path,
+                model_name=self.config.RECOGNITION_MODEL,  # Ex: "Facenet", "VGG-Face", etc.
+                enforce_detection=False,  # Não falha se não detectar rosto
+                detector_backend="opencv",  # Usa OpenCV para detecção
+            )
 
-            # Convertendo de BGR (OpenCV) para RGB (face_recognition)
-            rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-            # Encontrar todas as faces na imagem
-            face_locations = face_recognition.face_locations(rgb_img)
-            if face_locations:
-                # Pegar apenas a primeira face encontrada
-                face_encoding = face_recognition.face_encodings(
-                    rgb_img, face_locations
-                )[0]
-
-                self.known_encodings.append(face_encoding)
+            if embedding:
+                self.known_encodings.append(embedding[0]["embedding"])
                 self.known_names.append(pessoa.name)
                 self.known_ids.append(pessoa.id)
                 self.known_danger_levels.append(pessoa.danger_level)
@@ -105,62 +104,45 @@ class FaceRecognizer:
         except Exception as e:
             print(f"⚠️ Erro ao processar {img_path}: {str(e)}")
 
-    def _preprocess_image(self, img: np.ndarray) -> np.ndarray:
-        """Aplica pré-processamento na imagem"""
-        # Convert to grayscale
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-        # Equalize histogram
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        equalized = clahe.apply(gray)
-
-        # Convert back to 3 channels
-        return cv2.cvtColor(equalized, cv2.COLOR_GRAY2BGR)
-
-    def _train_classifier(self):
-        """Treina o classificador KNN"""
-        try:
-            if SKLEARN_AVAILABLE and self.known_encodings:
-                self.knn_classifier = KNeighborsClassifier(
-                    n_neighbors=3, metric="cosine", weights="distance"
-                )
-                encoded_labels = self.label_encoder.fit_transform(self.known_names)
-                self.knn_classifier.fit(self.known_encodings, encoded_labels)
-        except Exception as e:
-            print(f"❌ Erro ao treinar classificador: {str(e)}")
-            self.knn_classifier = None
-
     def recognize_faces(self, frame: np.ndarray, faces: List[Tuple]) -> List[Dict]:
-        """Reconhece faces na imagem"""
+        """Reconhece faces usando DeepFace"""
         results = []
 
-        if not DEEPFACE_AVAILABLE or not self.knn_classifier:
+        if not DEEPFACE_AVAILABLE:
             return self._basic_recognition(faces)
 
         for x, y, w, h in faces:
             try:
                 face_img = frame[y : y + h, x : x + w]
-                face_img = self._preprocess_image(face_img)
 
-                if DEEPFACE_AVAILABLE:
-                    embedding = DeepFace.represent(
-                        img_path=face_img,
-                        model_name=self.config.RECOGNITION_MODEL,
-                        enforce_detection=False,
-                        detector_backend="skip",
+                # Salva temporariamente para o DeepFace processar
+                temp_path = "temp_face.jpg"
+                cv2.imwrite(temp_path, face_img)
+
+                # Obtém embedding da face detectada
+                embedding = DeepFace.represent(
+                    img_path=temp_path,
+                    model_name=self.config.RECOGNITION_MODEL,
+                    enforce_detection=False,
+                    detector_backend="skip",  # Pula detecção (já detectamos)
+                )
+
+                if embedding:
+                    results.append(
+                        self._process_embedding(embedding[0]["embedding"], (x, y, w, h))
                     )
+                else:
+                    results.append(self._unknown_face((x, y, w, h)))
 
-                    if not embedding:
-                        raise ValueError("Embedding não gerado")
-
-                    result = self._process_embedding(
-                        embedding[0]["embedding"], (x, y, w, h)
-                    )
-                    results.append(result)
+                # Remove arquivo temporário
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
 
             except Exception as e:
                 print(f"⚠️ Erro no reconhecimento: {str(e)}")
                 results.append(self._unknown_face((x, y, w, h)))
+
+        return results
 
         # Otimiza periodicamente o classificador
         if time.time() - self.last_optimization_time > 3600:  # A cada hora
@@ -276,3 +258,18 @@ class FaceRecognizer:
         except Exception as e:
             print(f"❌ Erro ao carregar modelo: {str(e)}")
             return False
+
+    def _train_classifier(self):
+        """Treina o classificador KNN com os rostos conhecidos"""
+        try:
+            if SKLEARN_AVAILABLE and len(self.known_encodings) > 0:
+                print("⏳ Treinando classificador...")
+                self.knn_classifier = KNeighborsClassifier(
+                    n_neighbors=3, metric="cosine", weights="distance"
+                )
+                encoded_labels = self.label_encoder.fit_transform(self.known_names)
+                self.knn_classifier.fit(self.known_encodings, encoded_labels)
+                print("✅ Classificador treinado com sucesso")
+        except Exception as e:
+            print(f"❌ Erro ao treinar classificador: {str(e)}")
+            self.knn_classifier = None

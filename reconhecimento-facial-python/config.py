@@ -35,9 +35,9 @@ class Config:
         self.DETECTION_CONFIDENCE = 0.85  # Limiar mais rigoroso
 
         # Configurações de Reconhecimento
-        self.RECOGNITION_MODEL = "hog"  # ou "cnn" se tiver GPU poderosa
-        self.FACE_RECOGNITION_THRESHOLD = 0.6
-        self.MIN_ACCESS_INTERVAL = 5
+        self.RECOGNITION_MODEL = "Facenet"  # Pode ser "VGG-Face", "OpenFace", etc.
+        self.FACE_RECOGNITION_THRESHOLD = 0.6  # Limiar de confiança
+        self.MIN_ACCESS_INTERVAL = 5  # Tempo mínimo entre acessos (segundos)
 
         # Caminhos para Modelos
         self.DNN_MODEL_PATH = "models/res10_300x300_ssd_iter_140000_fp16.caffemodel"

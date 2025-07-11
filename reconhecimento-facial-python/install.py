@@ -12,6 +12,7 @@ def install_packages():
             [sys.executable, "-m", "pip", "install", "--upgrade", "pip"],
             check=True,
             stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
         print("✅ pip atualizado com sucesso")
     except subprocess.CalledProcessError:
@@ -19,12 +20,12 @@ def install_packages():
 
     # 2. Install packages one by one with error handling
     packages = [
-        "numpy",
-        "opencv-python",
-        "mysql-connector-python",
-        "scikit-learn",
-        "dlib",
-        "face_recognition",
+        "numpy==1.23.5",
+        "opencv-python==4.7.0.72",
+        "mysql-connector-python==8.0.33",
+        "scikit-learn==1.2.2",
+        "tensorflow==2.10.1",
+        "deepface==0.0.79",
     ]
 
     success_count = 0
@@ -35,26 +36,34 @@ def install_packages():
                 [sys.executable, "-m", "pip", "install", pkg],
                 check=True,
                 stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
             print(f"✅ {pkg} instalado")
             success_count += 1
         except subprocess.CalledProcessError as e:
             print(f"⚠️ Falha ao instalar {pkg}: {e}")
-            if pkg == "dlib":
-                print("Tentando instalar dlib com suporte a CUDA...")
+            if "tensorflow" in pkg:
+                print("Tentando instalar tensorflow-cpu...")
                 try:
                     subprocess.run(
-                        [sys.executable, "-m", "pip", "install", "dlib"],
+                        [
+                            sys.executable,
+                            "-m",
+                            "pip",
+                            "install",
+                            "tensorflow-cpu==2.10.1",
+                        ],
                         check=True,
                         stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
                     )
-                    print("✅ dlib instalado como fallback")
+                    print("✅ tensorflow-cpu instalado como fallback")
                     success_count += 1
                 except subprocess.CalledProcessError:
-                    print("⚠️ Falha ao instalar dlib")
+                    print("⚠️ Falha ao instalar tensorflow-cpu")
 
     # 3. Verify critical packages
-    critical_pkgs = ["numpy", "opencv-python"]
+    critical_pkgs = ["numpy", "opencv-python", "tensorflow", "deepface"]
     all_ok = True
     for pkg in critical_pkgs:
         try:
