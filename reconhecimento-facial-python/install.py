@@ -1,15 +1,73 @@
 import subprocess
 import sys
+import os
 
 
 def install_packages():
+    print("⏳ Configurando ambiente...")
+
+    # 1. First upgrade pip itself
     try:
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"]
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "pip"],
+            check=True,
+            stdout=subprocess.DEVNULL,
         )
-        print("Pacotes instalados com sucesso!")
-    except subprocess.CalledProcessError as e:
-        print(f"Erro ao instalar pacotes: {e}")
+        print("✅ pip atualizado com sucesso")
+    except subprocess.CalledProcessError:
+        print("⚠️ Não foi possível atualizar o pip, continuando...")
+
+    # 2. Install packages one by one with error handling
+    packages = [
+        "numpy",
+        "opencv-python",
+        "mysql-connector-python",
+        "scikit-learn",
+        "dlib",
+        "face_recognition",
+    ]
+
+    success_count = 0
+    for pkg in packages:
+        try:
+            print(f"⏳ Instalando {pkg}...")
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", pkg],
+                check=True,
+                stdout=subprocess.DEVNULL,
+            )
+            print(f"✅ {pkg} instalado")
+            success_count += 1
+        except subprocess.CalledProcessError as e:
+            print(f"⚠️ Falha ao instalar {pkg}: {e}")
+            if pkg == "dlib":
+                print("Tentando instalar dlib com suporte a CUDA...")
+                try:
+                    subprocess.run(
+                        [sys.executable, "-m", "pip", "install", "dlib"],
+                        check=True,
+                        stdout=subprocess.DEVNULL,
+                    )
+                    print("✅ dlib instalado como fallback")
+                    success_count += 1
+                except subprocess.CalledProcessError:
+                    print("⚠️ Falha ao instalar dlib")
+
+    # 3. Verify critical packages
+    critical_pkgs = ["numpy", "opencv-python"]
+    all_ok = True
+    for pkg in critical_pkgs:
+        try:
+            __import__(pkg)
+        except ImportError:
+            print(f"❌ {pkg} não está disponível após instalação!")
+            all_ok = False
+
+    print(f"\n📊 Resultado: {success_count}/{len(packages)} pacotes instalados")
+    if all_ok:
+        print("✅ Ambiente configurado com sucesso!")
+    else:
+        print("⚠️ Alguns pacotes não foram instalados corretamente")
 
 
 if __name__ == "__main__":

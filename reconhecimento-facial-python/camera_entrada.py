@@ -14,9 +14,10 @@ class CameraEntrada:
         self.face_detector = FaceDetector()
         self.face_recognizer = FaceRecognizer()
         self.camera_id = camera_id
-        self.window_name = f"{self.config.WINDOW_TITLE} - Entrada"
+        self.window_name = f"{self.config.WINDOW_TITLE} - Reconhecimento"
         self.last_access = {}
         self.show_info = True
+        self.unknown_faces = []  # Armazena faces desconhecidas para análise
 
         if not self.db_ops.connect():
             raise Exception("❌ Falha ao conectar no banco de dados")
@@ -24,17 +25,31 @@ class CameraEntrada:
         self.load_known_faces()
 
     def load_known_faces(self):
-        known_faces_data = self.db_ops.get_all_known_faces()
-        if known_faces_data:
-            self.face_recognizer.load_known_faces(known_faces_data)
-            print(
-                f"✅ {len(known_faces_data)} rostos cadastrados carregados para entrada"
-            )
+        """Carrega os rostos conhecidos com feedback visual"""
+        print("⏳ Carregando rostos conhecidos...")
+        start_time = time.time()
+
+        try:
+            known_faces_data = self.db_ops.get_all_known_faces()
+            if known_faces_data:
+                success = self.face_recognizer.load_known_faces(known_faces_data)
+                if success:
+                    elapsed = time.time() - start_time
+                    print(
+                        f"✅ {len(known_faces_data)} rostos carregados em {elapsed:.2f}s"
+                    )
+                else:
+                    print("⚠️ Falha ao carregar rostos conhecidos")
+            else:
+                print("⚠️ Nenhum rosto cadastrado encontrado")
+        except Exception as e:
+            print(f"❌ Erro ao carregar rostos conhecidos: {str(e)}")
 
     def run(self):
+        """Método principal com tratamento de erros aprimorado"""
         cap = cv2.VideoCapture(self.camera_id)
         if not cap.isOpened():
-            print(f"❌ Nao foi possivel acessar a camera (ID: {self.camera_id})")
+            print(f"❌ Não foi possível acessar a câmera (ID: {self.camera_id})")
             return
 
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
@@ -45,22 +60,28 @@ class CameraEntrada:
                 ret, frame = cap.read()
                 if not ret:
                     print("⚠️ Erro ao capturar frame")
-                    break
+                    time.sleep(0.1)
+                    continue
 
-                # Redimensiona o frame para se adaptar a tela
                 frame = self._resize_frame(frame)
-
-                # Processa o frame
                 faces = self.face_detector.detect_faces(frame)
-                results = self.face_recognizer.recognize_faces(frame, faces)
 
-                # Registra acessos
-                self._register_accesses(results)
+                if faces:
+                    results = self.face_recognizer.recognize_faces(frame, faces)
+                    self._register_accesses(results)
+                    frame = self._add_ui_elements(frame, results)
+                else:
+                    cv2.putText(
+                        frame,
+                        "Nenhuma face detectada",
+                        (50, 50),
+                        self.config.FONT,
+                        1,
+                        self.config.COLORS["warning"],
+                        2,
+                        cv2.LINE_AA,
+                    )
 
-                # Adiciona UI
-                frame = self._add_ui_elements(frame, results)
-
-                # Exibe o frame
                 cv2.imshow(self.window_name, frame)
 
                 key = cv2.waitKey(1) & 0xFF
@@ -68,54 +89,63 @@ class CameraEntrada:
                     break
                 elif key == ord("i"):
                     self.show_info = not self.show_info
+                elif key == ord("s"):
+                    self._save_current_state()
+                elif key == ord("l"):
+                    self._load_saved_state()
 
+        except Exception as e:
+            print(f"❌ Erro crítico: {str(e)}")
         finally:
             cap.release()
             cv2.destroyAllWindows()
             self.db_ops.close()
-            print("✅ camera de entrada encerrada")
+            print("✅ Câmera encerrada")
 
     def _resize_frame(self, frame):
-        """Redimensiona o frame para se adaptar a tela"""
-        screen_width = 1920  # Ajuste conforme necessário
-        screen_height = 1080
-        h, w = frame.shape[:2]
-
-        # Calcula a proporcao de redimensionamento
-        scale = min(screen_width / w, screen_height / h)
-
-        # Redimensiona mantendo a proporcao
-        if scale < 1:
-            frame = cv2.resize(
-                frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA
-            )
-
-        return frame
+        """Redimensiona o frame para se adequar à tela"""
+        try:
+            h, w = frame.shape[:2]
+            scale = min(1920 / w, 1080 / h)
+            if scale < 1:
+                frame = cv2.resize(
+                    frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA
+                )
+            return frame
+        except Exception as e:
+            print(f"⚠️ Erro ao redimensionar frame: {str(e)}")
+            return frame
 
     def _register_accesses(self, results):
-        """Registra acessos válidos"""
+        """Registra os acessos no banco de dados"""
         for result in results:
-            if (
-                result["user_id"]
-                and result["confidence"] > self.config.FACE_RECOGNITION_THRESHOLD
-            ):
-
-                user_id = result["user_id"]
-                current_time = time.time()
-
+            try:
                 if (
-                    user_id not in self.last_access
-                    or (current_time - self.last_access[user_id])
-                    > self.config.MIN_ACCESS_INTERVAL
+                    result["user_id"]
+                    and result["confidence"] > self.config.FACE_RECOGNITION_THRESHOLD
                 ):
 
-                    if self._register_access(result, "entrada"):
-                        self.last_access[user_id] = current_time
-                        print(
-                            f"👤 Entrada registrada: {result['name']} (ID: {user_id})"
-                        )
+                    user_id = result["user_id"]
+                    current_time = time.time()
+
+                    if (
+                        user_id not in self.last_access
+                        or (current_time - self.last_access[user_id])
+                        > self.config.MIN_ACCESS_INTERVAL
+                    ):
+
+                        if self._register_access(result, "entrada"):
+                            self.last_access[user_id] = current_time
+                            print(
+                                f"👤 Registrado: {result['name']} (ID: {user_id}) - "
+                                f"Confiança: {result['confidence']:.2f} - "
+                                f"Perigo: {result['danger_level']}"
+                            )
+            except Exception as e:
+                print(f"⚠️ Erro ao registrar acesso: {str(e)}")
 
     def _register_access(self, result, direction):
+        """Registra um acesso individual"""
         try:
             confidence_percent = min(round(result["confidence"] * 100, 2), 100)
             return self.db_ops.register_access(
@@ -123,6 +153,7 @@ class CameraEntrada:
                 name=result["name"],
                 direction=direction,
                 confidence=confidence_percent,
+                danger_level=result["danger_level"],
             )
         except Exception as e:
             print(f"❌ Erro ao registrar acesso: {e}")
@@ -130,79 +161,123 @@ class CameraEntrada:
 
     def _add_ui_elements(self, frame, results):
         """Adiciona elementos de interface ao frame"""
-        h, w = frame.shape[:2]
-
-        # Borda decorativa
-        frame = cv2.copyMakeBorder(
-            frame,
-            self.config.BORDER_SIZE,
-            self.config.BORDER_SIZE,
-            self.config.BORDER_SIZE,
-            self.config.BORDER_SIZE,
-            cv2.BORDER_CONSTANT,
-            value=self.config.COLORS["primary"],
-        )
-
-        # InformacOes na tela
-        if self.show_info:
-            info_text = [
-                f"Pessoas detectadas: {len(results)}",
-                f"Modo: Entrada",
-                "Pressione 'i' para ocultar informacoes",
-                "Pressione 'q' para voltar ao menu",
-            ]
-
-            for i, text in enumerate(info_text):
-                y_pos = 30 + i * 30
-                cv2.putText(
-                    frame,
-                    text,
-                    (10, y_pos),
-                    self.config.FONT,
-                    0.6,
-                    self.config.COLORS["light"],
-                    1,
-                    cv2.LINE_AA,
-                )
-
-        # Desenha deteccoes
-        for result in results:
-            (x1, y1, x2, y2) = result["location"]
-            name = result["name"]
-            confidence = result["confidence"]
-
-            # Ajusta coordenadas para a frame com borda
-            x1 += self.config.BORDER_SIZE
-            y1 += self.config.BORDER_SIZE
-            x2 += self.config.BORDER_SIZE
-            y2 += self.config.BORDER_SIZE
-
-            color = (
-                self.config.COLORS["success"]
-                if name != "Desconhecido"
-                else self.config.COLORS["danger"]
-            )
-
-            # Desenha retângulo e fundo do texto
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            cv2.rectangle(frame, (x1, y1 - 30), (x2, y1), color, -1)
-
-            # Texto da etiqueta
-            label = f"{name} ({confidence:.2f})"
-            cv2.putText(
+        try:
+            h, w = frame.shape[:2]
+            frame = cv2.copyMakeBorder(
                 frame,
-                label,
-                (x1, y1 - 10),
-                self.config.FONT,
-                self.config.FONT_SCALE,
-                self.config.COLORS["light"],
-                self.config.FONT_THICKNESS,
-                cv2.LINE_AA,
+                self.config.BORDER_SIZE,
+                self.config.BORDER_SIZE,
+                self.config.BORDER_SIZE,
+                self.config.BORDER_SIZE,
+                cv2.BORDER_CONSTANT,
+                value=self.config.COLORS["primary"],
             )
 
-        return frame
+            if self.show_info:
+                info_text = [
+                    f"Pessoas detectadas: {len(results)}",
+                    "Pressione 'i' para ocultar/mostrar informações",
+                    "Pressione 'q' para sair",
+                    "Pressione 's' para salvar estado",
+                    "Pressione 'l' para carregar estado",
+                ]
+
+                for i, text in enumerate(info_text):
+                    y_pos = 30 + i * 30
+                    cv2.putText(
+                        frame,
+                        text,
+                        (10, y_pos),
+                        self.config.FONT,
+                        0.6,
+                        self.config.COLORS["light"],
+                        1,
+                        cv2.LINE_AA,
+                    )
+
+            for result in results:
+                (x1, y1, x2, y2) = result["location"]
+                x1 += self.config.BORDER_SIZE
+                y1 += self.config.BORDER_SIZE
+                x2 += self.config.BORDER_SIZE
+                y2 += self.config.BORDER_SIZE
+
+                # Define a cor baseado no nível de perigo
+                color = self._get_danger_color(result.get("danger_level", "BAIXO"))
+
+                # Desenha retângulo ao redor do rosto
+                thickness = 2 if result["name"] == "Desconhecido" else 3
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
+
+                if result["name"] != "Desconhecido":
+                    # Desenha fundo do texto apenas para conhecidos
+                    cv2.rectangle(frame, (x1, y1 - 60), (x2, y1), color, -1)
+
+                    # Texto com nome e nível de perigo
+                    label_name = f"{result['name']}"
+                    label_danger = f"Perigo: {result.get('danger_level', 'BAIXO')}"
+                    label_confidence = f"Confiança: {result['confidence']:.2f}"
+
+                    cv2.putText(
+                        frame,
+                        label_name,
+                        (x1 + 5, y1 - 40),
+                        self.config.FONT,
+                        0.6,
+                        self.config.COLORS["light"],
+                        1,
+                        cv2.LINE_AA,
+                    )
+
+                    cv2.putText(
+                        frame,
+                        label_danger,
+                        (x1 + 5, y1 - 20),
+                        self.config.FONT,
+                        0.5,
+                        self.config.COLORS["light"],
+                        1,
+                        cv2.LINE_AA,
+                    )
+
+            return frame
+        except Exception as e:
+            print(f"⚠️ Erro ao adicionar elementos de UI: {str(e)}")
+            return frame
+
+    def _get_danger_color(self, danger_level):
+        """Retorna a cor correspondente ao nível de perigo"""
+        try:
+            danger_level = danger_level.upper()
+            if danger_level == "ALTO":
+                return self.config.COLORS["danger"]
+            elif danger_level == "MEDIO":
+                return self.config.COLORS["orange"]
+            else:  # BAIXO
+                return self.config.COLORS["warning"]
+        except:
+            return self.config.COLORS["warning"]
+
+    def _save_current_state(self):
+        """Salva o estado atual do reconhecimento"""
+        try:
+            self.face_recognizer.save_model()
+            print("💾 Estado do reconhecimento salvo com sucesso")
+        except Exception as e:
+            print(f"❌ Falha ao salvar estado: {str(e)}")
+
+    def _load_saved_state(self):
+        """Carrega um estado previamente salvo"""
+        try:
+            self.face_recognizer.load_model()
+            print("♻️ Estado do reconhecimento carregado com sucesso")
+        except Exception as e:
+            print(f"❌ Falha ao carregar estado: {str(e)}")
 
 
 if __name__ == "__main__":
-    camera = CameraEntrada(camera_id=0)
-    camera.run()
+    try:
+        CameraEntrada().run()
+    except Exception as e:
+        print(f"❌ Erro fatal: {str(e)}")
+        exit(1)

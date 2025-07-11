@@ -41,11 +41,12 @@ function criarTabelas($pdo)
                 `pessoa_id` int NOT NULL,
                 `data_hora` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 `nivel_confianca` decimal(5,2) NOT NULL,
-                `local` varchar(100),
+                `nivel_perigo` enum('ALTO','MEDIO','BAIXO') NOT NULL,
                 `observacoes` text,
                 PRIMARY KEY (`id`),
                 FOREIGN KEY (`pessoa_id`) REFERENCES `Pessoas` (`id`),
-                KEY `idx_data_hora` (`data_hora`)
+                KEY `idx_data_hora` (`data_hora`),
+                KEY `idx_perigo` (`nivel_perigo`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         ");
     } catch (\PDOException $e) {

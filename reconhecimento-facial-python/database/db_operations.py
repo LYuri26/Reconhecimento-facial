@@ -1,6 +1,16 @@
 import mysql.connector
 from mysql.connector import Error
-from .models import Person  # Import relativo corrigido
+
+
+class Person:
+    def __init__(self, id, name, folder, danger_level):
+        self.id = id
+        self.name = name
+        self.folder = folder
+        self.danger_level = danger_level
+
+    def __repr__(self):
+        return f"Person(ID={self.id}, Name='{self.name}', Danger='{self.danger_level}', Folder='{self.folder}')"
 
 
 class DBOperations:
@@ -9,7 +19,6 @@ class DBOperations:
         self.connection = None
 
     def connect(self):
-        """Estabelece conexão com o banco de dados"""
         try:
             self.connection = mysql.connector.connect(**self.db_config)
             if self.connection.is_connected():
@@ -20,59 +29,62 @@ class DBOperations:
         return False
 
     def get_all_known_faces(self):
-        """Obtém todos os rostos conhecidos do banco de dados"""
         try:
             cursor = self.connection.cursor(dictionary=True)
-            cursor.execute(
-                "SELECT ID, Nome, Pasta FROM Pessoas WHERE Pasta IS NOT NULL AND Ativo = 1"
-            )
+            cursor.execute("SELECT id, nome, pasta, nivel_perigo FROM Pessoas")
             pessoas = cursor.fetchall()
             cursor.close()
 
             if not pessoas:
-                print("⚠️ Nenhuma pessoa ativa cadastrada no banco de dados")
+                print("⚠️ Nenhuma pessoa cadastrada no banco de dados")
                 return None
 
-            return [Person(p["ID"], p["Nome"], p["Pasta"]) for p in pessoas]
+            return [
+                Person(p["id"], p["nome"], p["pasta"], p["nivel_perigo"])
+                for p in pessoas
+            ]
         except Exception as e:
             print(f"❌ Erro ao carregar rostos: {e}")
             return None
 
-    def register_access(self, user_id, name, direction, confidence):
-        """Registra um acesso no banco de dados"""
+    def register_access(self, user_id, name, direction, confidence, danger_level):
         try:
             cursor = self.connection.cursor()
 
-            # Registra na tabela Acessos
+            # Registra na tabela Reconhecimentos
             cursor.execute(
                 """
-                INSERT INTO Acessos 
-                (user_id, nome_pessoa, tipo_acesso, confianca) 
-                VALUES (%s, %s, %s, %s)
-                """,
-                (user_id, name, direction, confidence),
-            )
-
-            # Registra na tabela LogsSeguranca
-            cursor.execute(
-                """
-                INSERT INTO LogsSeguranca 
-                (tipo_evento, descricao, user_id) 
+                INSERT INTO Reconhecimentos 
+                (pessoa_id, nivel_confianca, nivel_perigo) 
                 VALUES (%s, %s, %s)
                 """,
-                ("acesso", f"Acesso {direction} - {name} (ID: {user_id})", user_id),
+                (user_id, confidence, danger_level),
+            )
+
+            # Registra na tabela Logs
+            cursor.execute(
+                """
+                INSERT INTO Logs 
+                (acao, detalhes) 
+                VALUES (%s, %s)
+                """,
+                (
+                    "reconhecimento",
+                    f"Reconhecimento {direction} - {name} (ID: {user_id}) - Perigo: {danger_level} - Confiança: {confidence}%",
+                ),
             )
 
             self.connection.commit()
             cursor.close()
-            print(f"✅ Acesso registrado: {direction.upper()} - {name} (ID: {user_id})")
+            print(
+                f"✅ Reconhecimento registrado: {direction.upper()} - {name} (ID: {user_id})"
+            )
             return True
         except Error as e:
-            print(f"❌ Erro ao registrar acesso: {e}")
+            print(f"❌ Erro ao registrar reconhecimento: {e}")
             return False
 
     def close(self):
-        """Fecha a conexão com o banco de dados"""
         if self.connection and self.connection.is_connected():
             self.connection.close()
             print("✅ Conexão com o banco de dados encerrada")

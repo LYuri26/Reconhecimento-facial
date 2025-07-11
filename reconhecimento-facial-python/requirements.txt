@@ -1,3 +1,6 @@
 numpy
 opencv-python
 mysql-connector-python
+scikit-learn
+dlib  # Mais leve que TensorFlow para reconhecimento facial
+face_recognition  # Biblioteca simples baseada em dlib

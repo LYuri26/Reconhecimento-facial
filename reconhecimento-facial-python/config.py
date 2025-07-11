@@ -1,64 +1,60 @@
-import os
-import cv2
-
-
 class Config:
     def __init__(self):
-        # Configuração do banco de dados
+        # Configurações do Banco de Dados
         self.DB_CONFIG = {
             "host": "localhost",
-            "database": "indentificacao",
             "user": "root",
             "password": "",
+            "database": "indentificacao",
             "port": 3306,
         }
 
-        # Configurações de reconhecimento facial
-        self.FACE_RECOGNITION_THRESHOLD = 0.6  # Limiar de confiança
-        self.FACE_IMAGE_SIZE = (100, 100)  # Tamanho padrão das imagens de rostos
-
-        # Configurações das câmeras
-        self.SHOW_PREVIEW = True  # Exibir pré-visualização
-        self.MIN_ACCESS_INTERVAL = 30  # Segundos entre acessos do mesmo usuário
-        self.BORDER_SIZE = 5  # Tamanho da borda decorativa (em pixels)
-        self.INFO_DISPLAY_TIME = 5  # Tempo de exibição das informações (segundos)
-
-        # Configuração de interface
+        # Configurações de Interface
+        self.WINDOW_TITLE = "Reconhecimento Facial"
+        self.DEFAULT_WINDOW_SIZE = (800, 600)
+        self.BORDER_SIZE = 10
         self.COLORS = {
-            "primary": (0, 165, 255),  # Laranja (entrada)
-            "secondary": (0, 215, 255),  # Dourado (saída)
-            "dark": (0, 0, 0),  # Preto
-            "light": (255, 255, 255),  # Branco
-            "success": (0, 255, 0),  # Verde (reconhecido)
-            "danger": (0, 0, 255),  # Vermelho (desconhecido)
-            "info_bg": (50, 50, 50),  # Fundo das informações
+            "primary": (0, 119, 200),
+            "secondary": (0, 180, 216),
+            "success": (0, 200, 83),
+            "warning": (0, 200, 200),
+            "orange": (0, 165, 255),
+            "danger": (0, 0, 255),
+            "dark": (50, 50, 50),
+            "light": (240, 240, 240),
         }
 
-        # Fonte e estilo de texto
-        self.FONT = cv2.FONT_HERSHEY_SIMPLEX
-        self.FONT_SCALE = 0.7  # Escala da fonte
-        self.FONT_THICKNESS = 2  # Espessura da fonte
+        # Configurações de Fonte
+        self._font = None
+        self.FONT_SCALE = 0.7
+        self.FONT_THICKNESS = 2
 
-        # Configurações da janela
-        self.WINDOW_TITLE = "Sistema de indentificacao Inteligente"
-        self.DEFAULT_WINDOW_SIZE = (800, 600)  # Largura, Altura (px)
-        self.WINDOW_SIZE = self.DEFAULT_WINDOW_SIZE  # Compatibilidade
+        # Configurações de Detecção
+        self.FACE_IMAGE_SIZE = (160, 160)  # Tamanho ideal para Facenet
+        self.MIN_FACE_SIZE = (30, 30)  # Tamanho mínimo para detecção
+        self.DETECTION_CONFIDENCE = 0.85  # Limiar mais rigoroso
 
-        # Diretório base
-        self.BASE_DIR = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "cadastro-web-php")
-        )
+        # Configurações de Reconhecimento
+        self.RECOGNITION_MODEL = "hog"  # ou "cnn" se tiver GPU poderosa
+        self.FACE_RECOGNITION_THRESHOLD = 0.6
+        self.MIN_ACCESS_INTERVAL = 5
 
-    def get_full_path(self, relative_path):
-        """Converte um caminho relativo para absoluto."""
-        if relative_path.startswith("imagens/"):
-            relative_path = relative_path[8:]  # Remove o prefixo
-        return os.path.join(self.BASE_DIR, "imagens", relative_path)
+        # Caminhos para Modelos
+        self.DNN_MODEL_PATH = "models/res10_300x300_ssd_iter_140000_fp16.caffemodel"
+        self.DNN_CONFIG_PATH = "models/deploy.prototxt"
 
-    def get_window_center(self, frame_width, frame_height):
-        """Calcula a posição central para a janela."""
-        screen_width = 1920  # Ajuste conforme a resolução do monitor
-        screen_height = 1080
-        x = (screen_width - frame_width) // 2
-        y = (screen_height - frame_height) // 2
-        return x, y
+    @property
+    def FONT(self):
+        if self._font is None:
+            import cv2
+
+            self._font = cv2.FONT_HERSHEY_SIMPLEX
+        return self._font
+
+    @FONT.setter
+    def FONT(self, value):
+        self._font = value
+
+    def get_full_path(self, folder):
+        """Retorna o caminho completo para a pasta de armazenamento de rostos"""
+        return f"../cadastro-web-php/{folder}"
