@@ -8,7 +8,7 @@ from config import Config
 class App:
     def __init__(self):
         self.config = Config()
-        self.window_name = "Menu Principal - Catraca Inteligente"
+        self.window_name = "Menu Principal - Indentificacao Inteligente"
         self.options = [
             {"text": "1 - Modulo de Entrada", "action": self._start_entrada},
             {"text": "2 - Modulo de Saida", "action": self._start_saida},

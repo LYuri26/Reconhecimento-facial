@@ -5,7 +5,7 @@ ini_set('display_errors', 1);
 $host = 'localhost';
 $user = 'root';
 $pass = '';
-$db = 'Catraca';
+$db = 'indentificacao';
 $charset = 'utf8mb4';
 
 try {

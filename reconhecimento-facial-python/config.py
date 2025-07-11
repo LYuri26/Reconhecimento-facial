@@ -7,7 +7,7 @@ class Config:
         # Configuração do banco de dados
         self.DB_CONFIG = {
             "host": "localhost",
-            "database": "Catraca",
+            "database": "indentificacao",
             "user": "root",
             "password": "",
             "port": 3306,
@@ -40,7 +40,7 @@ class Config:
         self.FONT_THICKNESS = 2  # Espessura da fonte
 
         # Configurações da janela
-        self.WINDOW_TITLE = "Sistema de Catraca Inteligente"
+        self.WINDOW_TITLE = "Sistema de indentificacao Inteligente"
         self.DEFAULT_WINDOW_SIZE = (800, 600)  # Largura, Altura (px)
         self.WINDOW_SIZE = self.DEFAULT_WINDOW_SIZE  # Compatibilidade
 

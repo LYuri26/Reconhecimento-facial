@@ -2,48 +2,49 @@
 function criarTabelas($pdo)
 {
     try {
-        // Tabela Pessoas simplificada
+        // Tabela Pessoas
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS `Pessoas` (
-                `ID` int NOT NULL AUTO_INCREMENT,
-                `Nome` varchar(100) NOT NULL,
-                `cpf` varchar(14) NOT NULL,
-                `Email` varchar(200) NOT NULL,
-                `Telefone` varchar(15) NOT NULL,
-                `Pasta` varchar(255) DEFAULT NULL,
-                `Ativo` tinyint(1) DEFAULT 1,
-                `DataCadastro` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (`ID`),
-                UNIQUE KEY `cpf_UNIQUE` (`cpf`),
-                KEY `idx_ativo` (`Ativo`)
+                `id` int NOT NULL AUTO_INCREMENT,
+                `nome` varchar(100) NOT NULL,
+                `sobrenome` varchar(100) NOT NULL,
+                `apelido` varchar(50),
+                `foto` varchar(255) NOT NULL,
+                `pasta` varchar(255) NOT NULL,
+                `nivel_perigo` enum('ALTO','MEDIO','BAIXO') NOT NULL DEFAULT 'BAIXO',
+                `foragido` boolean NOT NULL DEFAULT false,
+                `observacoes` text,
+                `data_cadastro` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `idx_nome_unico` (`nome`, `sobrenome`),
+                KEY `idx_perigo` (`nivel_perigo`),
+                KEY `idx_foragido` (`foragido`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         ");
 
-        // Tabela Acessos simplificada
+        // Tabela de Logs (corrigido o nome)
         $pdo->exec("
-            CREATE TABLE IF NOT EXISTS `Acessos` (
+            CREATE TABLE IF NOT EXISTS `Logs` (
                 `id` int NOT NULL AUTO_INCREMENT,
-                `user_id` int NOT NULL,
-                `nome_pessoa` varchar(100) NOT NULL,
-                `tipo_acesso` enum('entrada','saida') NOT NULL,
                 `data_hora` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                `confianca` decimal(5,2) DEFAULT NULL,
+                `acao` varchar(50) NOT NULL,
+                `detalhes` text,
                 PRIMARY KEY (`id`),
-                FOREIGN KEY (`user_id`) REFERENCES `Pessoas` (`ID`),
-                KEY `idx_data_hora` (`data_hora`),
-                KEY `idx_user_id` (`user_id`)
+                KEY `idx_data_hora` (`data_hora`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         ");
 
-        // Tabela Logs simplificada
+        // Tabela de Reconhecimentos
         $pdo->exec("
-            CREATE TABLE IF NOT EXISTS `LogsSeguranca` (
+            CREATE TABLE IF NOT EXISTS `Reconhecimentos` (
                 `id` int NOT NULL AUTO_INCREMENT,
+                `pessoa_id` int NOT NULL,
                 `data_hora` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                `tipo_evento` enum('acesso','tentativa_falha') NOT NULL,
-                `descricao` text NOT NULL,
-                `user_id` int DEFAULT NULL,
+                `nivel_confianca` decimal(5,2) NOT NULL,
+                `local` varchar(100),
+                `observacoes` text,
                 PRIMARY KEY (`id`),
+                FOREIGN KEY (`pessoa_id`) REFERENCES `Pessoas` (`id`),
                 KEY `idx_data_hora` (`data_hora`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         ");
