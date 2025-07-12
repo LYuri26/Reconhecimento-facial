@@ -1,0 +1,200 @@
+/* Estilos específicos para a página de cadastro (cadastro.html) */
+
+/* Layout principal */
+body {
+  background-color: #f8f9fa;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Navbar personalizada */
+.navbar-back {
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: white;
+  text-decoration: none;
+  transition: opacity 0.2s ease;
+}
+
+.navbar-back:hover {
+  opacity: 0.85;
+  color: white;
+}
+
+.navbar-title {
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Container do formulário */
+.form-container {
+  flex: 1;
+  padding: 2rem 0;
+}
+
+/* Card do formulário */
+.form-card {
+  border: none;
+  border-radius: 15px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  background-color: white;
+}
+
+.form-card-header {
+  background: linear-gradient(135deg, #0d6efd 0%, #0b5ed7 100%);
+  padding: 1.5rem;
+  color: white;
+}
+
+.form-card-header h3 {
+  margin: 0;
+  font-weight: 600;
+  text-align: center;
+}
+
+/* Campos do formulário */
+.form-label {
+  font-weight: 500;
+  margin-bottom: 0.5rem;
+  display: block;
+}
+
+.form-control {
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  border: 1px solid #ced4da;
+  transition: all 0.3s ease;
+}
+
+.form-control:focus {
+  border-color: #86b7fe;
+  box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+textarea.form-control {
+  min-height: 100px;
+}
+
+/* Upload de imagens */
+.file-upload-container {
+  margin-top: 1rem;
+}
+
+.file-upload-label {
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+.file-upload-info {
+  font-size: 0.875rem;
+  color: #6c757d;
+  display: block;
+  margin-top: 0.25rem;
+}
+
+/* Preview de imagens */
+.preview-container {
+  margin-top: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.image-preview {
+  position: relative;
+  width: 100px;
+  height: 100px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #dee2e6;
+  transition: all 0.3s ease;
+}
+
+.image-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.remove-btn {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 24px;
+  height: 24px;
+  background-color: rgba(220, 53, 69, 0.9);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.image-preview:hover .remove-btn {
+  opacity: 1;
+}
+
+/* Botão de submit */
+.submit-btn {
+  padding: 0.75rem;
+  font-size: 1.1rem;
+  font-weight: 500;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  transition: all 0.3s ease;
+  background-color: #0d6efd;
+  color: white;
+  border: none;
+}
+
+.submit-btn:hover {
+  background-color: #0b5ed7;
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(13, 110, 253, 0.3);
+}
+
+/* Validação */
+.is-invalid {
+  border-color: #dc3545 !important;
+}
+
+.invalid-feedback {
+  color: #dc3545;
+  font-size: 0.875rem;
+  margin-top: 0.25rem;
+  display: block;
+}
+
+.required-field::after {
+  content: " *";
+  color: #dc3545;
+}
+
+/* Responsividade */
+@media (max-width: 768px) {
+  .form-container {
+    padding: 1.5rem 0;
+  }
+
+  .form-card-header {
+    padding: 1.25rem;
+  }
+
+  .submit-btn {
+    padding: 0.65rem;
+    font-size: 1rem;
+  }
+}

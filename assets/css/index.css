@@ -1,0 +1,133 @@
+/* Estilos específicos para a página inicial (index.html) */
+
+/* Layout principal */
+body {
+  background-color: #f8f9fa;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Navbar personalizada */
+.navbar-brand {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.navbar-brand i {
+  font-size: 1.2rem;
+}
+
+/* Container principal */
+.main-container {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: 2rem 0;
+}
+
+/* Card do menu */
+.menu-card {
+  border: none;
+  border-radius: 15px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  background-color: white;
+}
+
+.menu-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.15);
+}
+
+.menu-card-header {
+  background: linear-gradient(135deg, #0d6efd 0%, #0b5ed7 100%);
+  padding: 1.5rem;
+  color: white;
+  text-align: center;
+}
+
+.menu-card-header h3 {
+  margin: 0;
+  font-weight: 600;
+}
+
+/* Botões do menu */
+.menu-btn {
+  padding: 1rem;
+  font-size: 1.1rem;
+  border-radius: 10px;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  font-weight: 500;
+  border: none;
+  text-align: center;
+}
+
+.menu-btn i {
+  font-size: 1.3rem;
+}
+
+.menu-btn-primary {
+  background-color: #0d6efd;
+  color: white;
+}
+
+.menu-btn-primary:hover {
+  background-color: #0b5ed7;
+  transform: translateY(-3px);
+  box-shadow: 0 5px 15px rgba(13, 110, 253, 0.3);
+}
+
+.menu-btn-secondary {
+  background-color: #6c757d;
+  color: white;
+}
+
+.menu-btn-secondary:hover {
+  background-color: #5c636a;
+  transform: translateY(-3px);
+  box-shadow: 0 5px 15px rgba(108, 117, 125, 0.3);
+}
+
+.menu-btn-info {
+  background-color: #0dcaf0;
+  color: white;
+}
+
+.menu-btn-info:hover {
+  background-color: #0aa2c0;
+  transform: translateY(-3px);
+  box-shadow: 0 5px 15px rgba(13, 202, 240, 0.3);
+}
+
+/* Rodapé */
+.footer {
+  background-color: #f8f9fa;
+  padding: 1rem 0;
+  text-align: center;
+  border-top: 1px solid #e9ecef;
+  margin-top: auto;
+}
+
+/* Responsividade */
+@media (max-width: 768px) {
+  .main-container {
+    padding: 1.5rem 0;
+  }
+
+  .menu-btn {
+    padding: 0.85rem;
+    font-size: 1rem;
+  }
+
+  .menu-card-header {
+    padding: 1.25rem;
+  }
+}
