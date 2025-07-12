@@ -114,12 +114,24 @@ def api_reconhecer():
         file.save(temp_path)
 
         try:
+            img = cv2.imread(temp_path)
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            faces = fr.face_cascade.detectMultiScale(
+                gray, scaleFactor=1.1, minNeighbors=5, minSize=(100, 100)
+            )
+
+            if len(faces) == 0:
+                return jsonify({"sucesso": False, "mensagem": "Nenhum rosto detectado"})
+
+            (x, y, w, h) = faces[0]
+            face = gray[y : y + h, x : x + w]
+            face = cv2.resize(face, (220, 220))
+
+            # Reconhecimento
             pessoa_id, confianca = fr.reconhecer_face(temp_path, db)
 
             if pessoa_id:
-                db.registrar_reconhecimento(pessoa_id)
                 pessoa = db.obter_pessoa(pessoa_id)
-
                 return jsonify(
                     {
                         "sucesso": True,
@@ -128,12 +140,29 @@ def api_reconhecer():
                             "nome": pessoa["nome"],
                             "sobrenome": pessoa["sobrenome"],
                         },
+                        "face": {
+                            "x": int(x),
+                            "y": int(y),
+                            "width": int(w),
+                            "height": int(h),
+                        },
                         "confianca": float(confianca),
                         "data_hora": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     }
                 )
             else:
-                return jsonify({"sucesso": False, "mensagem": "Pessoa não reconhecida"})
+                return jsonify(
+                    {
+                        "sucesso": False,
+                        "mensagem": "Pessoa não reconhecida",
+                        "face": {
+                            "x": int(x),
+                            "y": int(y),
+                            "width": int(w),
+                            "height": int(h),
+                        },
+                    }
+                )
 
         except Exception as e:
             return jsonify({"erro": str(e)}), 500

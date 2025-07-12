@@ -1,115 +1,207 @@
-{% extends "base.html" %}
-
-{% block title %}Reconhecimento Facial{% endblock %}
-
+{% extends "base.html" %} {% block title %}Reconhecimento Facial{% endblock %}
 {% block content %}
 <div class="container mt-4">
-    <div class="row justify-content-center">
-        <div class="col-lg-8">
-            <div class="card shadow">
-                <div class="card-header bg-primary text-white">
-                    <h4 class="mb-0"><i class="fas fa-camera me-2"></i>Reconhecimento em Tempo Real</h4>
-                </div>
-                <div class="card-body">
-                    <div class="ratio ratio-16x9 mb-3">
-                        <video id="webcam" autoplay playsinline class="rounded"></video>
-                    </div>
-                    <div id="resultado" class="alert alert-info text-center">
-                        <i class="fas fa-info-circle me-2"></i>Aproxime seu rosto da câmera...
-                    </div>
-                    <div class="d-grid">
-                        <button id="btnCapturar" class="btn btn-primary">
-                            <i class="fas fa-camera me-2"></i>Capturar e Reconhecer
-                        </button>
-                    </div>
-                </div>
-            </div>
+  <div class="row justify-content-center">
+    <div class="col-lg-8">
+      <div class="card shadow">
+        <div class="card-header bg-primary text-white">
+          <h4 class="mb-0">
+            <i class="fas fa-camera me-2"></i>Reconhecimento em Tempo Real
+          </h4>
         </div>
+        <div class="card-body">
+          <div class="ratio ratio-16x9 mb-3 position-relative">
+            <video id="webcam" autoplay playsinline class="rounded"></video>
+            <div id="faceOverlay" class="face-overlay"></div>
+          </div>
+          <div id="resultado" class="alert alert-info text-center">
+            <i class="fas fa-info-circle me-2"></i>Reconhecimento facial
+            ativo...
+          </div>
+        </div>
+      </div>
     </div>
+  </div>
 </div>
-{% endblock %}
 
-{% block scripts %}
+<style>
+  .face-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+  }
+  .face-box {
+    position: absolute;
+    border: 3px solid;
+    border-radius: 5px;
+  }
+  .face-name {
+    position: absolute;
+    color: white;
+    font-weight: bold;
+    padding: 5px;
+    border-radius: 5px;
+    font-size: 16px;
+  }
+  .face-confidence {
+    position: absolute;
+    color: white;
+    padding: 3px;
+    font-size: 14px;
+  }
+</style>
+{% endblock %} {% block scripts %}
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-    const video = document.getElementById('webcam');
-    const btnCapturar = document.getElementById('btnCapturar');
-    const resultadoDiv = document.getElementById('resultado');
-    
+  document.addEventListener("DOMContentLoaded", function () {
+    const video = document.getElementById("webcam");
+    const faceOverlay = document.getElementById("faceOverlay");
+    const resultadoDiv = document.getElementById("resultado");
+    let recognitionInterval;
+
+    // Configurações da câmera
+    const constraints = {
+      video: {
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        facingMode: "user",
+      },
+    };
+
     // Acessa a webcam
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        navigator.mediaDevices.getUserMedia({ 
-            video: { 
-                width: 1280, 
-                height: 720,
-                facingMode: 'user'
-            } 
+      navigator.mediaDevices
+        .getUserMedia(constraints)
+        .then((stream) => {
+          video.srcObject = stream;
+          startRecognition();
         })
-        .then(stream => video.srcObject = stream)
-        .catch(error => {
-            resultadoDiv.innerHTML = `
+        .catch((error) => {
+          resultadoDiv.innerHTML = `
                 <i class="fas fa-exclamation-triangle me-2"></i>
                 Erro ao acessar a webcam: ${error.message}
             `;
-            resultadoDiv.className = 'alert alert-danger';
+          resultadoDiv.className = "alert alert-danger";
         });
     }
-    
-    // Captura e reconhecimento
-    btnCapturar.addEventListener('click', async function() {
-        try {
-            const canvas = document.createElement('canvas');
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-            
-            const blob = await new Promise(resolve => 
-                canvas.toBlob(resolve, 'image/jpeg', 0.9)
-            );
-            
-            const formData = new FormData();
-            formData.append('imagem', blob, 'captura.jpg');
-            
-            resultadoDiv.innerHTML = `
-                <div class="d-flex justify-content-center">
-                    <div class="spinner-border text-primary" role="status">
-                        <span class="visually-hidden">Processando...</span>
-                    </div>
-                    <span class="ms-2">Processando reconhecimento...</span>
-                </div>
-            `;
-            
-            const response = await fetch('/api/reconhecer', {
-                method: 'POST',
-                body: formData
-            });
-            
-            const data = await response.json();
-            
-            if (data.sucesso) {
-                resultadoDiv.innerHTML = `
+
+    function startRecognition() {
+      // Configura o intervalo de reconhecimento (1 segundo)
+      recognitionInterval = setInterval(recognizeFace, 1000);
+    }
+
+    async function recognizeFace() {
+      try {
+        // Captura frame da webcam
+        const canvas = document.createElement("canvas");
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        const blob = await new Promise((resolve) =>
+          canvas.toBlob(resolve, "image/jpeg", 0.9)
+        );
+
+        const formData = new FormData();
+        formData.append("imagem", blob, "captura.jpg");
+
+        // Envia para a API de reconhecimento
+        const response = await fetch("/api/reconhecer", {
+          method: "POST",
+          body: formData,
+        });
+
+        const data = await response.json();
+
+        // Limpa overlays anteriores
+        faceOverlay.innerHTML = "";
+
+        if (data.sucesso) {
+          // Cria máscara visual para rosto reconhecido
+          const faceBox = document.createElement("div");
+          faceBox.className = "face-box";
+          faceBox.style.borderColor = "#00ff00";
+          faceBox.style.left = `${data.face.x}px`;
+          faceBox.style.top = `${data.face.y}px`;
+          faceBox.style.width = `${data.face.width}px`;
+          faceBox.style.height = `${data.face.height}px`;
+
+          // Cria label com nome
+          const nameLabel = document.createElement("div");
+          nameLabel.className = "face-name";
+          nameLabel.style.backgroundColor = "#00ff00";
+          nameLabel.style.left = `${data.face.x}px`;
+          nameLabel.style.top = `${data.face.y - 40}px`;
+          nameLabel.textContent = `${data.pessoa.nome} ${data.pessoa.sobrenome}`;
+
+          // Cria label com confiança
+          const confLabel = document.createElement("div");
+          confLabel.className = "face-confidence";
+          confLabel.style.backgroundColor = "#00ff00";
+          confLabel.style.left = `${data.face.x}px`;
+          confLabel.style.top = `${data.face.y + data.face.height + 5}px`;
+          confLabel.textContent = `Confiança: ${(data.confianca * 100).toFixed(
+            2
+          )}%`;
+
+          // Adiciona elementos ao overlay
+          faceOverlay.appendChild(faceBox);
+          faceOverlay.appendChild(nameLabel);
+          faceOverlay.appendChild(confLabel);
+
+          resultadoDiv.innerHTML = `
                     <h5><i class="fas fa-check-circle text-success me-2"></i>Pessoa Reconhecida!</h5>
                     <hr>
-                    <p><strong><i class="fas fa-user me-2"></i>Nome:</strong> ${data.pessoa.nome} ${data.pessoa.sobrenome}</p>
-                    <p><strong><i class="fas fa-percentage me-2"></i>Confiança:</strong> ${(data.confianca * 100).toFixed(2)}%</p>
-                    <p><strong><i class="fas fa-clock me-2"></i>Data/Hora:</strong> ${data.data_hora}</p>
+                    <p><strong><i class="fas fa-user me-2"></i>Nome:</strong> ${
+                      data.pessoa.nome
+                    } ${data.pessoa.sobrenome}</p>
+                    <p><strong><i class="fas fa-percentage me-2"></i>Confiança:</strong> ${(
+                      data.confianca * 100
+                    ).toFixed(2)}%</p>
+                    <p><strong><i class="fas fa-clock me-2"></i>Data/Hora:</strong> ${
+                      data.data_hora
+                    }</p>
                 `;
-                resultadoDiv.className = 'alert alert-success';
-            } else {
-                resultadoDiv.innerHTML = `
+          resultadoDiv.className = "alert alert-success";
+        } else {
+          if (data.face) {
+            // Cria máscara visual para rosto desconhecido
+            const faceBox = document.createElement("div");
+            faceBox.className = "face-box";
+            faceBox.style.borderColor = "#ff0000";
+            faceBox.style.left = `${data.face.x}px`;
+            faceBox.style.top = `${data.face.y}px`;
+            faceBox.style.width = `${data.face.width}px`;
+            faceBox.style.height = `${data.face.height}px`;
+
+            // Cria label "Desconhecido"
+            const nameLabel = document.createElement("div");
+            nameLabel.className = "face-name";
+            nameLabel.style.backgroundColor = "#ff0000";
+            nameLabel.style.left = `${data.face.x}px`;
+            nameLabel.style.top = `${data.face.y - 40}px`;
+            nameLabel.textContent = "Desconhecido";
+
+            faceOverlay.appendChild(faceBox);
+            faceOverlay.appendChild(nameLabel);
+          }
+
+          resultadoDiv.innerHTML = `
                     <i class="fas fa-exclamation-triangle me-2"></i>
-                    ${data.mensagem || 'Pessoa não reconhecida.'}
+                    ${data.mensagem || "Nenhum rosto reconhecido."}
                 `;
-                resultadoDiv.className = 'alert alert-warning';
-            }
-        } catch (error) {
-            resultadoDiv.innerHTML = `
-                <i class="fas fa-times-circle me-2"></i>
-                Erro ao processar reconhecimento: ${error}
-            `;
-            resultadoDiv.className = 'alert alert-danger';
+          resultadoDiv.className = "alert alert-warning";
         }
+      } catch (error) {
+        console.error("Erro no reconhecimento:", error);
+      }
+    }
+
+    // Limpa o intervalo quando a página é fechada
+    window.addEventListener("beforeunload", () => {
+      clearInterval(recognitionInterval);
     });
-});
+  });
 </script>
 {% endblock %}
