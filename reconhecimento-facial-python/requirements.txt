@@ -1,6 +1,0 @@
-numpy==1.23.5
-opencv-python==4.7.0.72
-mysql-connector-python==8.0.33
-scikit-learn==1.2.2
-tensorflow==2.10.1  # Necessário para o DeepFace funcionar no Python 3.10
-deepface==0.0.79  # Versão estável

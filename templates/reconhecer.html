@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block title %}Reconhecimento Facial{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card shadow">
+                <div class="card-header bg-primary text-white">
+                    <h4 class="mb-0"><i class="fas fa-camera me-2"></i>Reconhecimento em Tempo Real</h4>
+                </div>
+                <div class="card-body">
+                    <div class="ratio ratio-16x9 mb-3">
+                        <video id="webcam" autoplay playsinline class="rounded"></video>
+                    </div>
+                    <div id="resultado" class="alert alert-info text-center">
+                        <i class="fas fa-info-circle me-2"></i>Aproxime seu rosto da câmera...
+                    </div>
+                    <div class="d-grid">
+                        <button id="btnCapturar" class="btn btn-primary">
+                            <i class="fas fa-camera me-2"></i>Capturar e Reconhecer
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const video = document.getElementById('webcam');
+    const btnCapturar = document.getElementById('btnCapturar');
+    const resultadoDiv = document.getElementById('resultado');
+    
+    // Acessa a webcam
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        navigator.mediaDevices.getUserMedia({ 
+            video: { 
+                width: 1280, 
+                height: 720,
+                facingMode: 'user'
+            } 
+        })
+        .then(stream => video.srcObject = stream)
+        .catch(error => {
+            resultadoDiv.innerHTML = `
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                Erro ao acessar a webcam: ${error.message}
+            `;
+            resultadoDiv.className = 'alert alert-danger';
+        });
+    }
+    
+    // Captura e reconhecimento
+    btnCapturar.addEventListener('click', async function() {
+        try {
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            const blob = await new Promise(resolve => 
+                canvas.toBlob(resolve, 'image/jpeg', 0.9)
+            );
+            
+            const formData = new FormData();
+            formData.append('imagem', blob, 'captura.jpg');
+            
+            resultadoDiv.innerHTML = `
+                <div class="d-flex justify-content-center">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Processando...</span>
+                    </div>
+                    <span class="ms-2">Processando reconhecimento...</span>
+                </div>
+            `;
+            
+            const response = await fetch('/api/reconhecer', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
+            
+            if (data.sucesso) {
+                resultadoDiv.innerHTML = `
+                    <h5><i class="fas fa-check-circle text-success me-2"></i>Pessoa Reconhecida!</h5>
+                    <hr>
+                    <p><strong><i class="fas fa-user me-2"></i>Nome:</strong> ${data.pessoa.nome} ${data.pessoa.sobrenome}</p>
+                    <p><strong><i class="fas fa-percentage me-2"></i>Confiança:</strong> ${(data.confianca * 100).toFixed(2)}%</p>
+                    <p><strong><i class="fas fa-clock me-2"></i>Data/Hora:</strong> ${data.data_hora}</p>
+                `;
+                resultadoDiv.className = 'alert alert-success';
+            } else {
+                resultadoDiv.innerHTML = `
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    ${data.mensagem || 'Pessoa não reconhecida.'}
+                `;
+                resultadoDiv.className = 'alert alert-warning';
+            }
+        } catch (error) {
+            resultadoDiv.innerHTML = `
+                <i class="fas fa-times-circle me-2"></i>
+                Erro ao processar reconhecimento: ${error}
+            `;
+            resultadoDiv.className = 'alert alert-danger';
+        }
+    });
+});
+</script>
+{% endblock %}
