@@ -4,14 +4,21 @@ CREATE DATABASE IF NOT EXISTS reconhecimento_facial CHARACTER SET utf8mb4 COLLAT
 -- Seleciona o banco de dados
 USE reconhecimento_facial;
 
--- Criação da tabela de usuários
-CREATE TABLE IF NOT EXISTS usuarios (
+-- Criação da tabela de cadastros (equivalente à TABELA_CADASTROS no PHP)
+CREATE TABLE IF NOT EXISTS cadastros (
     id INT AUTO_INCREMENT PRIMARY KEY,
     nome VARCHAR(100) NOT NULL,
-    email VARCHAR(100) NOT NULL UNIQUE,
-    senha VARCHAR(255) NOT NULL,
-    telefone VARCHAR(20),
-    data_nascimento DATE,
-    foto VARCHAR(255),
+    sobrenome VARCHAR(100) NOT NULL,
+    apelido VARCHAR(100),
+    observacoes TEXT,
     data_cadastro DATETIME NOT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
+
+-- Criação da tabela de imagens (equivalente à TABELA_IMAGENS no PHP)
+CREATE TABLE IF NOT EXISTS imagens_cadastro (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    cadastro_id INT NOT NULL,
+    caminho_imagem VARCHAR(255) NOT NULL,
+    data_upload DATETIME NOT NULL,
+    CONSTRAINT fk_cadastro_id FOREIGN KEY (cadastro_id) REFERENCES cadastros(id) ON DELETE CASCADE
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
