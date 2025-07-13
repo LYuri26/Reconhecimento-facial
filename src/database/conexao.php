@@ -75,7 +75,7 @@ class Database
                     // Adiciona chaves estrangeiras se existirem
                     if (isset($structure['foreign_keys'])) {
                         foreach ($structure['foreign_keys'] as $column => $fk) {
-                            $query .= ", FOREIGN KEY ($column) REFERENCES {$fk['references']}";
+                            $query .= ", CONSTRAINT fk_{$table}_{$column} FOREIGN KEY ($column) REFERENCES {$fk['references']}";
                             if (isset($fk['on_delete'])) {
                                 $query .= " ON DELETE {$fk['on_delete']}";
                             }
