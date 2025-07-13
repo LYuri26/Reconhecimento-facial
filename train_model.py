@@ -68,6 +68,31 @@ class DeepFaceTrainer:
             if conn and conn.is_connected():
                 conn.close()
 
+    def validate_image(self, img_path):
+        """Valida se a imagem é adequada para processamento"""
+        try:
+            img = cv2.imread(img_path)
+            if img is None:
+                return False, "Não foi possível ler a imagem"
+
+            # Verificar tamanho mínimo
+            if img.shape[0] < 100 or img.shape[1] < 100:
+                return False, "Imagem muito pequena"
+
+            # Tentar detectar rosto rapidamente
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            face_cascade = cv2.CascadeClassifier(
+                cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            )
+            faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+
+            if len(faces) == 0:
+                return False, "Nenhum rosto detectado na pré-validação"
+
+            return True, "OK"
+        except Exception as e:
+            return False, f"Erro na validação: {str(e)}"
+
     def generate_embeddings(self, user_images):
         """Gera embeddings faciais para todas as imagens"""
         print("\nGerando embeddings faciais...")
@@ -77,7 +102,13 @@ class DeepFaceTrainer:
         label_counter = 0
 
         for user_id, user_data in user_images.items():
+            print(
+                f"\nProcessando usuário ID: {user_id} - {user_data['nome']} {user_data['sobrenome']}"
+            )
+            print(f"Total de imagens: {len(user_data['images'])}")
+
             if not user_data["images"]:
+                print("Nenhuma imagem encontrada para este usuário")
                 continue
 
             self.label_map[user_id] = label_counter
@@ -85,30 +116,50 @@ class DeepFaceTrainer:
             label_counter += 1
 
             embeddings = []
+            valid_images = 0
+
             for img_path in user_data["images"]:
                 try:
                     full_path = os.path.join("uploads", img_path.replace("\\", "/"))
+                    print(f"\nProcessando imagem: {full_path}")
+
                     if not os.path.exists(full_path):
-                        print(f"Arquivo não encontrado: {full_path}")
+                        print(f"ERRO: Arquivo não encontrado: {full_path}")
                         continue
 
-                    # Extrair embedding usando represent
-                    embedding_obj = DeepFace.represent(
-                        img_path=full_path,
-                        model_name="Facenet",
-                        enforce_detection=True,
-                        detector_backend="opencv",
-                    )
+                    # Validar imagem antes de processar
+                    is_valid, msg = self.validate_image(full_path)
+                    if not is_valid:
+                        print(f"Imagem inválida: {msg}")
+                        continue
+
+                    # Tentar com detector padrão primeiro
+                    try:
+                        embedding_obj = DeepFace.represent(
+                            img_path=full_path,
+                            model_name="Facenet",
+                            enforce_detection=True,
+                            detector_backend="opencv",
+                        )
+                    except Exception as e:
+                        print(f"Erro com detector opencv: {str(e)} - Tentando com ssd")
+                        embedding_obj = DeepFace.represent(
+                            img_path=full_path,
+                            model_name="Facenet",
+                            enforce_detection=True,
+                            detector_backend="ssd",
+                        )
 
                     if embedding_obj:
                         embedding = np.array(embedding_obj[0]["embedding"]).flatten()
                         embeddings.append(embedding)
+                        valid_images += 1
                         print(
-                            f"Embedding gerado para {img_path} - Shape: {embedding.shape}"
+                            f"Embedding gerado com sucesso - Shape: {embedding.shape}"
                         )
 
                 except Exception as e:
-                    print(f"Erro ao gerar embedding para {img_path}: {str(e)}")
+                    print(f"ERRO ao gerar embedding: {str(e)}")
                     continue
 
             if embeddings:
@@ -118,11 +169,18 @@ class DeepFaceTrainer:
                     "sobrenome": user_data["sobrenome"],
                     "embedding": avg_embedding.tolist(),
                 }
+                print(f"\nResumo para {user_data['nome']}:")
                 print(
-                    f"Embedding médio para {user_data['nome']} - Shape: {avg_embedding.shape}"
+                    f"- Imagens processadas com sucesso: {valid_images}/{len(user_data['images'])}"
+                )
+                print(f"- Embedding médio shape: {avg_embedding.shape}")
+            else:
+                print(
+                    f"\nATENÇÃO: Nenhum embedding válido gerado para {user_data['nome']}"
                 )
 
-        print(f"Embeddings gerados em {time.time()-start_time:.2f} segundos")
+        print(f"\nEmbeddings gerados em {time.time()-start_time:.2f} segundos")
+        print(f"Total de usuários processados: {len(embeddings_db)}/{len(user_images)}")
         return embeddings_db
 
     def save_model(self):
