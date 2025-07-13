@@ -13,7 +13,6 @@ import glob
 import unicodedata
 import re
 
-
 # Ignorar avisos específicos
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -55,8 +54,8 @@ class FaceTrainer:
         # Configurações iniciais
         self.BASE_UPLOAD_PATH = "uploads/"
         self.TRAINING_DATA_PATH = "training_data/"
-        self.MIN_IMAGES_PER_USER = 5  # Mínimo de imagens por usuário para treinamento
-        self.VARIATIONS_PER_IMAGE = 15  # Variações geradas por imagem original
+        self.MAX_VARIATIONS = 20  # Máximo de variações por imagem
+        self.MIN_IMAGES_FOR_NO_VAR = 20  # Número de imagens para não gerar variações
 
         # Carregar classificador de faces
         self.face_cascade = self._load_face_cascade()
@@ -94,19 +93,16 @@ class FaceTrainer:
     def _init_face_recognizer(self):
         """Inicializa o reconhecedor facial com suporte a múltiplas versões do OpenCV"""
         try:
-            # Tentar a versão mais recente (OpenCV 4+)
             return cv2.face.LBPHFaceRecognizer_create(
                 radius=2, neighbors=16, grid_x=8, grid_y=8, threshold=100
             )
         except AttributeError:
             try:
-                # Tentar versão alternativa (OpenCV 3)
                 return cv2.face.createLBPHFaceRecognizer(
                     radius=2, neighbors=16, grid_x=8, grid_y=8, threshold=100
                 )
             except AttributeError:
                 try:
-                    # Tentar versão mais antiga
                     return cv2.createLBPHFaceRecognizer()
                 except AttributeError:
                     return None
@@ -128,30 +124,41 @@ class FaceTrainer:
 
         try:
             cursor = conn.cursor()
-
-            # Verificar se todas as tabelas necessárias existem
             required_tables = ["cadastros", "imagens_cadastro", "treinamentos"]
+
             for table in required_tables:
                 cursor.execute(
                     """
-                    SELECT TABLE_NAME 
-                    FROM INFORMATION_SCHEMA.TABLES 
+                    SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES 
                     WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s
-                    """,
+                """,
                     (self.db_config["database"], table),
                 )
+
                 if not cursor.fetchone():
                     print(f"ERRO: Tabela '{table}' não encontrada")
                     return False
 
             return True
-
         except Error as e:
             print(f"ERRO ao verificar tabelas: {str(e)}")
             return False
         finally:
             if conn.is_connected():
                 conn.close()
+
+    def calculate_variations(self, num_original_images):
+        """Calcula o número de variações com base nas imagens originais"""
+        if num_original_images >= 20:
+            return 0  # Não gera variações se tiver 20+ imagens
+        elif num_original_images >= 10:
+            return 2  # 10 imagens → 2 variações cada
+        elif num_original_images >= 5:
+            return 4  # 5 imagens → 4 variações cada
+        elif num_original_images >= 2:
+            return 10  # 2 imagens → 10 variações cada
+        else:
+            return 20  # 1 imagem → 20 variações
 
     def get_image_path(self, db_path):
         """Converte caminho do banco para caminho completo no sistema de arquivos"""
@@ -363,12 +370,16 @@ class FaceTrainer:
                 conn.close()
 
     def process_user_images(self, user_id, user_data):
-        """Processa todas as imagens de um usuário"""
+        """Processa todas as imagens de um usuário com variações dinâmicas"""
         face_samples = []
         registered_paths = []
-
-        # Contador de imagens processadas com sucesso
         processed_count = 0
+
+        # Calcula quantas variações gerar por imagem
+        num_variations = self.calculate_variations(len(user_data))
+        print(
+            f"Gerando {num_variations} variações por imagem (total original: {len(user_data)})"
+        )
 
         for img_data in user_data:
             try:
@@ -376,7 +387,7 @@ class FaceTrainer:
                 pil_image = Image.open(full_path).convert("L")
                 image_np = np.array(pil_image, "uint8")
 
-                # Detectar faces com parâmetros otimizados
+                # Detectar faces
                 faces = self.face_cascade.detectMultiScale(
                     image_np,
                     scaleFactor=1.05,
@@ -389,11 +400,8 @@ class FaceTrainer:
                     print(f"Nenhuma face detectada em {img_data['path']}")
                     continue
 
-                # Processar cada face encontrada na imagem
                 for x, y, w, h in faces:
                     face_img = image_np[y : y + h, x : x + w]
-
-                    # Padronizar tamanho e equalizar histograma
                     face_img = self._standardize_face_image(face_img)
 
                     # Salvar imagem original
@@ -406,12 +414,11 @@ class FaceTrainer:
                         registered_paths.append(saved_path)
                         processed_count += 1
 
-                        # Gerar variações apenas se tivermos poucas imagens originais
-                        if len(user_data) < 10:
+                        # Gerar variações se necessário
+                        if num_variations > 0:
                             variations = self.generate_variations(
-                                face_img, variations=self.VARIATIONS_PER_IMAGE
+                                face_img, variations=num_variations
                             )
-
                             for idx, variation in enumerate(variations):
                                 var_path = self.save_training_image(
                                     user_id,
@@ -420,7 +427,6 @@ class FaceTrainer:
                                     variation,
                                     variation_idx=idx,
                                 )
-
                                 if var_path:
                                     face_samples.append(variation)
                                     registered_paths.append(var_path)
@@ -512,26 +518,23 @@ class FaceTrainer:
         try:
             self.recognizer.train(faces, ids)
             self.recognizer.save("model/trained_model.yml")
-
             print("\nTreinamento concluído com sucesso!")
             print(f"Modelo salvo em: model/trained_model.yml")
-            print(f"Imagens de treinamento salvas em: {self.TRAINING_DATA_PATH}")
             return True
-
         except Exception as e:
             print(f"\nErro durante o treinamento: {str(e)}")
             return False
 
 
 if __name__ == "__main__":
-    # Verificar instalação do OpenCV antes de começar
+    # Verificar instalação do OpenCV
     try:
         print("Versão do OpenCV instalada:", cv2.__version__)
         if not hasattr(cv2, "face"):
             print("\nERRO: Módulo 'face' não encontrado no OpenCV.")
-            print("Você instalou o pacote errado. Execute:")
-            print("pip uninstall opencv-python")
-            print("pip install opencv-contrib-python")
+            print(
+                "Execute: pip uninstall opencv-python && pip install opencv-contrib-python"
+            )
             sys.exit(1)
     except Exception as e:
         print("ERRO ao verificar OpenCV:", str(e))
