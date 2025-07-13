@@ -1,7 +1,18 @@
-mysql-connector-python
-pyfiglet
-Pillow
-numpy==1.26.4 
-opencv-python==4.9.0.80
-imgaug 
-opencv-contrib-python==4.5.5.64
+# Versões testadas e compatíveis
+numpy==1.26.4
+Pillow==10.1.0
+opencv-contrib-python==4.9.0.80
+imgaug==0.4.0
+mysql-connector-python==8.1.0
+pyfiglet==0.8.post1
+
+# DeepFace e dependências com versões específicas
+deepface==0.0.79
+tensorflow==2.15.0
+tf-keras==2.15.1
+keras==2.15.0
+pandas==2.1.4
+tqdm==4.66.1
+gdown==4.7.1
+retrying==1.3.4
+scipy==1.11.4

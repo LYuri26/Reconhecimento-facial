@@ -1,160 +1,184 @@
-import os
 import cv2
 import numpy as np
+import pickle
 import mysql.connector
+from deepface import DeepFace
+from deepface.modules import verification
 from mysql.connector import Error
 
 
 class FaceRecognizer:
     def __init__(self):
-        # Configurações do banco de dados
-        self.DB_CONFIG = {
-            "host": "localhost",
-            "user": "root",
-            "password": "",
-            "database": "reconhecimento_facial",
-        }
+        self.MODEL_PATH = "model/deepface_model.pkl"
+        self.THRESHOLD = 0.65
+        self.DETECTOR = "opencv"  # Mais estável que retinaface para alguns sistemas
 
-        # Carrega o modelo treinado
-        self.recognizer = cv2.face.LBPHFaceRecognizer_create()
-        self.recognizer.read("model/trained_model.yml")
+        # Carregar modelo
+        self.load_model()
+        self.db_connection = self.create_db_connection()
 
-        # Inicializa detector de faces
-        self.face_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-        )
-
-        # Configurações da webcam
+        # Configuração da câmera
         self.cap = cv2.VideoCapture(0)
-        self.cap.set(3, 640)  # Largura
-        self.cap.set(4, 480)  # Altura
+        self.cap.set(3, 640)
+        self.cap.set(4, 480)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        self.cap.set(cv2.CAP_PROP_FPS, 30)
 
-    def get_db_connection(self):
-        """Estabelece conexão com o banco de dados"""
+    def create_db_connection(self):
         try:
-            return mysql.connector.connect(**self.DB_CONFIG)
+            return mysql.connector.connect(
+                host="localhost",
+                user="root",
+                password="",
+                database="reconhecimento_facial",
+            )
         except Error as e:
-            print(f"Erro ao conectar ao MySQL: {e}")
+            print(f"Erro na conexão com o banco: {e}")
             return None
+
+    def load_model(self):
+        with open(self.MODEL_PATH, "rb") as f:
+            data = pickle.load(f)
+            self.embeddings_db = data["embeddings_db"]
+            print(f"Modelo carregado com {len(self.embeddings_db)} pessoas")
 
     def get_user_info(self, user_id):
-        """Obtém informações do usuário"""
-        conn = self.get_db_connection()
-        if conn is None:
-            return None
-
         try:
-            cursor = conn.cursor(dictionary=True)
+            cursor = self.db_connection.cursor(dictionary=True)
             cursor.execute(
-                """
-                SELECT id, nome, sobrenome 
-                FROM cadastros 
-                WHERE id = %s
-            """,
-                (user_id,),
+                "SELECT nome, sobrenome FROM cadastros WHERE id = %s", (user_id,)
             )
-            return cursor.fetchone()
+            result = cursor.fetchone()
+            return result if result else {"nome": "Desconhecido", "sobrenome": ""}
         except Error as e:
             print(f"Erro ao buscar usuário: {e}")
-            return None
-        finally:
-            if conn and conn.is_connected():
-                conn.close()
+            return {"nome": "Desconhecido", "sobrenome": ""}
 
-    def recognize_faces(self, frame):
-        """Reconhece faces em um frame da webcam"""
+    def safe_get_embedding(self, face_img):
+        """Gera embedding com tratamento robusto de tipos de imagem"""
         try:
-            # Converte para escala de cinza
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            # Verifica se é numpy array e converte para uint8 se necessário
+            if isinstance(face_img, np.ndarray):
+                if face_img.dtype != np.uint8:
+                    if np.issubdtype(face_img.dtype, np.floating):
+                        face_img = (face_img * 255).astype(np.uint8)
+                    else:
+                        face_img = face_img.astype(np.uint8)
 
-            # Detecta faces
-            faces = self.face_cascade.detectMultiScale(
-                gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+                # Converte BGR para RGB se necessário
+                if len(face_img.shape) == 3 and face_img.shape[2] == 3:
+                    face_img = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
+
+            # Gera o embedding
+            embedding_obj = DeepFace.represent(
+                img_path=face_img,
+                model_name="Facenet",
+                enforce_detection=False,
+                detector_backend="skip",
+                normalization="base",
             )
 
-            if len(faces) == 0:  # Verificação correta para arrays NumPy
-                return None
-
-            results = []
-            for x, y, w, h in faces:
-                # Extrai e redimensiona a face
-                face_img = gray[y : y + h, x : x + w]
-                face_img = cv2.resize(face_img, (200, 200))
-
-                # Faz a predição
-                label, confidence = self.recognizer.predict(face_img)
-
-                # Obtém informações do usuário
-                user_info = self.get_user_info(label)
-                if user_info is not None:  # Verificação explícita de None
-                    results.append(
-                        {
-                            "user": user_info,
-                            "confidence": confidence,
-                            "position": (x, y, w, h),
-                        }
-                    )
-
-            return results if len(results) > 0 else None  # Verificação correta
+            if embedding_obj and isinstance(embedding_obj, list):
+                return np.array(embedding_obj[0]["embedding"]).flatten()
 
         except Exception as e:
-            print(f"Erro durante o reconhecimento: {e}")
-            return None
+            print(f"Erro na geração de embedding: {str(e)}")
+        return None
 
-    def draw_boxes(self, frame, results):
-        """Desenha retângulos e informações na imagem"""
-        for result in results:
-            x, y, w, h = result["position"]
-            user = result["user"]
-            confidence = result["confidence"]
+    def calculate_similarity(self, emb1, emb2):
+        try:
+            emb1 = emb1 / (np.linalg.norm(emb1) + 1e-10)
+            emb2 = emb2 / (np.linalg.norm(emb2) + 1e-10)
+            return np.dot(emb1, emb2)
+        except:
+            return 0.0
 
-            # Define a cor com base na confiança
-            if confidence < 50:
-                color = (0, 255, 0)  # Verde (confiável)
-            elif confidence < 70:
-                color = (0, 255, 255)  # Amarelo (moderado)
-            else:
-                color = (0, 0, 255)  # Vermelho (não confiável)
+    def process_frame(self, frame):
+        try:
+            # Garante que o frame está em BGR (padrão OpenCV)
+            if frame is None or frame.size == 0:
+                return
 
-            # Desenha o retângulo
-            cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-
-            # Exibe informações
-            text = f"{user['nome']} {user['sobrenome']} ({confidence:.1f})"
-            cv2.putText(
-                frame, text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2
+            # Detecção facial
+            faces = DeepFace.extract_faces(
+                img_path=frame,
+                detector_backend=self.DETECTOR,
+                enforce_detection=False,
+                align=True,
             )
 
-    def run_webcam_recognition(self):
-        """Executa o reconhecimento em tempo real pela webcam"""
-        print("\nIniciando reconhecimento facial pela webcam...")
-        print("Pressione 'q' para sair")
+            for face in faces:
+                if not face or not face.get("facial_area"):
+                    continue
 
+                area = face["facial_area"]
+                x, y, w, h = area["x"], area["y"], area["w"], area["h"]
+
+                # Extrai a região do rosto
+                face_region = frame[y : y + h, x : x + w]
+
+                # Gera embedding
+                live_emb = self.safe_get_embedding(face_region)
+                if live_emb is None:
+                    continue
+
+                # Comparação com banco de dados
+                best_match = None
+                best_score = 0
+                for user_id, user_data in self.embeddings_db.items():
+                    stored_emb = np.array(user_data["embedding"]).flatten()
+                    score = self.calculate_similarity(live_emb, stored_emb)
+                    if score > best_score:
+                        best_score = score
+                        best_match = user_id
+
+                print(f"Similaridade: {best_score:.4f}")
+
+                # Exibe resultados
+                if best_score > self.THRESHOLD:
+                    user_info = self.get_user_info(best_match)
+                    label = f"{user_info['nome']} {user_info['sobrenome']}"
+                    color = (0, 255, 0)
+                else:
+                    label = "Desconhecido"
+                    color = (0, 0, 255)
+
+                cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+                cv2.putText(
+                    frame,
+                    f"{label} ({best_score:.2f})",
+                    (x, y - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    color,
+                    2,
+                )
+
+        except Exception as e:
+            print(f"Erro no processamento: {str(e)}")
+
+    def run(self):
+        print("\nSistema Ativo - Pressione 'q' para sair")
         while True:
             ret, frame = self.cap.read()
             if not ret:
-                print("Erro ao capturar frame da webcam")
+                print("Erro ao capturar frame")
                 break
 
-            # Realiza o reconhecimento
-            results = self.recognize_faces(frame)
+            frame = cv2.flip(frame, 1)
+            self.process_frame(frame)
 
-            # Desenha os resultados
-            if results is not None:  # Verificação explícita
-                self.draw_boxes(frame, results)
-
-            # Mostra o frame
             cv2.imshow("Reconhecimento Facial", frame)
-
-            # Verifica se o usuário quer sair
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
 
-        # Libera os recursos
+        if self.db_connection:
+            self.db_connection.close()
         self.cap.release()
         cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
-    recognizer = FaceRecognizer()
-    recognizer.run_webcam_recognition()
+    fr = FaceRecognizer()
+    fr.run()
