@@ -1,9 +1,9 @@
 import cv2
 import numpy as np
 import pickle
+import subprocess
 import mysql.connector
 from deepface import DeepFace
-from deepface.modules import verification
 from mysql.connector import Error
 
 
@@ -11,19 +11,29 @@ class FaceRecognizer:
     def __init__(self):
         self.MODEL_PATH = "model/deepface_model.pkl"
         self.THRESHOLD = 0.65
-        self.DETECTOR = "opencv"  # Mais estável que retinaface para alguns sistemas
+        self.DETECTOR = "opencv"
+        self.width = 1920
+        self.height = 1080
 
-        # Carregar modelo
         self.load_model()
         self.db_connection = self.create_db_connection()
 
-        # Configuração da câmera
-        self.cap = cv2.VideoCapture(0)
-        self.cap.set(3, 640)
-        self.cap.set(4, 480)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        self.cap.set(cv2.CAP_PROP_FPS, 30)
+        rtsp_url = "rtsp://admin:Evento0128@192.168.1.101:559/Streaming/Channels/101"
+        ffmpeg_cmd = [
+            "ffmpeg",
+            "-rtsp_transport",
+            "tcp",
+            "-i",
+            rtsp_url,
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "bgr24",
+            "-",
+        ]
+        self.proc = subprocess.Popen(
+            ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=10**8
+        )
 
     def create_db_connection(self):
         try:
@@ -56,21 +66,16 @@ class FaceRecognizer:
             return {"nome": "Desconhecido", "sobrenome": ""}
 
     def safe_get_embedding(self, face_img):
-        """Gera embedding com tratamento robusto de tipos de imagem"""
         try:
-            # Verifica se é numpy array e converte para uint8 se necessário
             if isinstance(face_img, np.ndarray):
                 if face_img.dtype != np.uint8:
                     if np.issubdtype(face_img.dtype, np.floating):
                         face_img = (face_img * 255).astype(np.uint8)
                     else:
                         face_img = face_img.astype(np.uint8)
-
-                # Converte BGR para RGB se necessário
                 if len(face_img.shape) == 3 and face_img.shape[2] == 3:
                     face_img = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
 
-            # Gera o embedding
             embedding_obj = DeepFace.represent(
                 img_path=face_img,
                 model_name="Facenet",
@@ -78,10 +83,8 @@ class FaceRecognizer:
                 detector_backend="skip",
                 normalization="base",
             )
-
             if embedding_obj and isinstance(embedding_obj, list):
                 return np.array(embedding_obj[0]["embedding"]).flatten()
-
         except Exception as e:
             print(f"Erro na geração de embedding: {str(e)}")
         return None
@@ -96,11 +99,9 @@ class FaceRecognizer:
 
     def process_frame(self, frame):
         try:
-            # Garante que o frame está em BGR (padrão OpenCV)
             if frame is None or frame.size == 0:
                 return
 
-            # Detecção facial
             faces = DeepFace.extract_faces(
                 img_path=frame,
                 detector_backend=self.DETECTOR,
@@ -115,15 +116,12 @@ class FaceRecognizer:
                 area = face["facial_area"]
                 x, y, w, h = area["x"], area["y"], area["w"], area["h"]
 
-                # Extrai a região do rosto
                 face_region = frame[y : y + h, x : x + w]
 
-                # Gera embedding
                 live_emb = self.safe_get_embedding(face_region)
                 if live_emb is None:
                     continue
 
-                # Comparação com banco de dados
                 best_match = None
                 best_score = 0
                 for user_id, user_data in self.embeddings_db.items():
@@ -135,7 +133,6 @@ class FaceRecognizer:
 
                 print(f"Similaridade: {best_score:.4f}")
 
-                # Exibe resultados
                 if best_score > self.THRESHOLD:
                     user_info = self.get_user_info(best_match)
                     label = f"{user_info['nome']} {user_info['sobrenome']}"
@@ -154,15 +151,21 @@ class FaceRecognizer:
                     color,
                     2,
                 )
-
         except Exception as e:
             print(f"Erro no processamento: {str(e)}")
+
+    def read_frame(self):
+        raw_frame = self.proc.stdout.read(self.width * self.height * 3)
+        if len(raw_frame) != self.width * self.height * 3:
+            return None
+        frame = np.frombuffer(raw_frame, np.uint8).reshape((self.height, self.width, 3))
+        return frame
 
     def run(self):
         print("\nSistema Ativo - Pressione 'q' para sair")
         while True:
-            ret, frame = self.cap.read()
-            if not ret:
+            frame = self.read_frame()
+            if frame is None:
                 print("Erro ao capturar frame")
                 break
 
@@ -175,7 +178,7 @@ class FaceRecognizer:
 
         if self.db_connection:
             self.db_connection.close()
-        self.cap.release()
+        self.proc.terminate()
         cv2.destroyAllWindows()
 
 
