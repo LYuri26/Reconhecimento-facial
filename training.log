@@ -1,0 +1,100 @@
+2025-07-14 17:29:12,268 - INFO - 
+=== Sistema de Treinamento com DeepFace ===
+2025-07-14 17:29:12,269 - INFO - Obtendo imagens do banco de dados...
+2025-07-14 17:29:12,271 - INFO - Conexão com o banco de dados estabelecida com sucesso
+2025-07-14 17:29:12,273 - INFO - Gerando embeddings faciais...
+2025-07-14 17:29:12,273 - INFO - 
+Iniciando geração de embeddings faciais...
+2025-07-14 17:29:12,273 - INFO - 
+Processando usuário ID: 1 - Lenon Yuri
+2025-07-14 17:29:12,273 - INFO - Total de imagens: 6
+2025-07-14 17:29:30,045 - INFO - Embedding gerado com sucesso para uploads/lenon_yuri/lenon_yuri_1752524613_2.jpg
+2025-07-14 17:29:30,051 - INFO - Embedding gerado com sucesso para uploads/lenon_yuri/lenon_yuri_1752524613_0.jpg
+2025-07-14 17:29:30,138 - INFO - Embedding gerado com sucesso para uploads/lenon_yuri/lenon_yuri_1752524613_3.jpg
+2025-07-14 17:29:30,433 - INFO - Embedding gerado com sucesso para uploads/lenon_yuri/lenon_yuri_1752524613_1.jpg
+2025-07-14 17:29:30,934 - INFO - Embedding gerado com sucesso para uploads/lenon_yuri/lenon_yuri_1752524613_5.jpg
+2025-07-14 17:29:31,204 - INFO - Embedding gerado com sucesso para uploads/lenon_yuri/lenon_yuri_1752524613_4.jpg
+2025-07-14 17:29:31,210 - INFO - 
+Resumo para Lenon:
+2025-07-14 17:29:31,210 - INFO - - Imagens processadas com sucesso: 6/6
+2025-07-14 17:29:31,210 - INFO - - Embedding médio shape: 512
+2025-07-14 17:29:31,210 - INFO - 
+Embeddings gerados em 18.94 segundos
+2025-07-14 17:29:31,211 - INFO - Total de usuários processados: 1/1
+2025-07-14 17:29:31,211 - INFO - 
+Modelo DeepFace salvo em: model/deepface_model.pkl
+2025-07-14 17:29:31,211 - INFO - 
+Treinamento realizado com sucesso!
+2025-07-14 17:36:13,546 - INFO - 
+=== Sistema de Treinamento com DeepFace ===
+2025-07-14 17:36:13,546 - INFO - Obtendo imagens do banco de dados...
+2025-07-14 17:36:13,548 - INFO - Conexão com o banco de dados estabelecida com sucesso
+2025-07-14 17:36:13,549 - INFO - Gerando embeddings faciais...
+2025-07-14 17:36:13,549 - INFO - 
+Iniciando geração de embeddings faciais...
+2025-07-14 17:36:13,549 - INFO - 
+Processando usuário ID: 1 - Lenon Yuri
+2025-07-14 17:36:13,549 - INFO - Total de imagens: 6
+2025-07-14 17:36:35,463 - INFO - Embedding gerado com sucesso para uploads/lenon_yuri/lenon_yuri_1752524613_2.jpg
+2025-07-14 17:36:35,724 - INFO - Embedding gerado com sucesso para uploads/lenon_yuri/lenon_yuri_1752524613_3.jpg
+2025-07-14 17:36:36,648 - INFO - Embedding gerado com sucesso para uploads/lenon_yuri/lenon_yuri_1752524613_1.jpg
+2025-07-14 17:36:37,324 - INFO - Embedding gerado com sucesso para uploads/lenon_yuri/lenon_yuri_1752524613_0.jpg
+2025-07-14 17:36:37,529 - INFO - Embedding gerado com sucesso para uploads/lenon_yuri/lenon_yuri_1752524613_5.jpg
+2025-07-14 17:36:38,012 - INFO - Embedding gerado com sucesso para uploads/lenon_yuri/lenon_yuri_1752524613_4.jpg
+2025-07-14 17:36:38,018 - INFO - 
+Resumo para Lenon:
+2025-07-14 17:36:38,018 - INFO - - Imagens processadas com sucesso: 6/6
+2025-07-14 17:36:38,019 - INFO - - Embedding médio shape: 512
+2025-07-14 17:36:38,019 - INFO - 
+Embeddings gerados em 24.47 segundos
+2025-07-14 17:36:38,020 - INFO - Total de usuários processados: 1/1
+2025-07-14 17:36:38,021 - INFO - 
+Modelo DeepFace salvo em: model/deepface_model.pkl
+2025-07-14 17:36:38,021 - INFO - 
+Treinamento realizado com sucesso!
+2025-07-14 18:27:41,706 - INFO - 
+=== Sistema de Treinamento com DeepFace ===
+2025-07-14 18:27:41,707 - INFO - Obtendo imagens do banco de dados...
+2025-07-14 18:27:41,709 - INFO - Conexão com o banco de dados estabelecida com sucesso
+2025-07-14 18:27:41,710 - INFO - Gerando embeddings faciais...
+2025-07-14 18:27:41,710 - INFO - 
+Iniciando geração de embeddings faciais...
+2025-07-14 18:27:41,710 - INFO - 
+Processando usuário ID: 1 - Lenon Yuri
+2025-07-14 18:27:41,710 - INFO - Total de imagens: 1
+2025-07-14 18:27:41,710 - WARNING - Usuário 1 tem apenas 1 imagens (mínimo recomendado: 5)
+2025-07-14 18:27:46,748 - INFO - Embedding gerado com sucesso para uploads/lenon_yuri/lenon_yuri_1752528443_0.jpg
+2025-07-14 18:27:46,749 - INFO - 
+Resumo para Lenon:
+2025-07-14 18:27:46,750 - INFO - - Imagens processadas com sucesso: 1/1
+2025-07-14 18:27:46,750 - INFO - - Embedding médio shape: 512
+2025-07-14 18:27:46,750 - INFO - 
+Embeddings gerados em 5.04 segundos
+2025-07-14 18:27:46,750 - INFO - Total de usuários processados: 1/1
+2025-07-14 18:27:46,750 - INFO - 
+Modelo DeepFace salvo em: model/deepface_model.pkl
+2025-07-14 18:27:46,750 - INFO - 
+Treinamento realizado com sucesso!
+2025-07-14 18:31:11,542 - INFO - 
+=== Sistema de Treinamento com DeepFace ===
+2025-07-14 18:31:11,542 - INFO - Obtendo imagens do banco de dados...
+2025-07-14 18:31:11,545 - INFO - Conexão com o banco de dados estabelecida com sucesso
+2025-07-14 18:31:11,546 - INFO - Gerando embeddings faciais...
+2025-07-14 18:31:11,546 - INFO - 
+Iniciando geração de embeddings faciais...
+2025-07-14 18:31:11,546 - INFO - 
+Processando usuário ID: 1 - Lenon Yuri
+2025-07-14 18:31:11,546 - INFO - Total de imagens: 1
+2025-07-14 18:31:11,546 - WARNING - Usuário 1 tem apenas 1 imagens (mínimo recomendado: 5)
+2025-07-14 18:31:16,745 - INFO - Embedding gerado com sucesso para uploads/lenon_yuri/lenon_yuri_1752528657_0.jpg
+2025-07-14 18:31:16,746 - INFO - 
+Resumo para Lenon:
+2025-07-14 18:31:16,748 - INFO - - Imagens processadas com sucesso: 1/1
+2025-07-14 18:31:16,748 - INFO - - Embedding médio shape: 512
+2025-07-14 18:31:16,748 - INFO - 
+Embeddings gerados em 5.20 segundos
+2025-07-14 18:31:16,748 - INFO - Total de usuários processados: 1/1
+2025-07-14 18:31:16,748 - INFO - 
+Modelo DeepFace salvo em: model/deepface_model.pkl
+2025-07-14 18:31:16,749 - INFO - 
+Treinamento realizado com sucesso!
