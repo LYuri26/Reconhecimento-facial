@@ -85,7 +85,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             if ($acao === 'treinamento_ia') {
                 $arg = '--treinamento';
             } elseif ($acao === 'iniciar_cameras') {
-                $arg = '--cameras';
+                $arg = '--reconhecimento';  // Mudado para --reconhecimento
             } else {
                 $response['error'] = 'Ação não reconhecida: ' . $acao;
                 echo json_encode($response);

@@ -112,12 +112,23 @@ def executar_treinamento():
     return True
 
 
-def executar_cameras():
-    """Função para iniciar câmeras"""
-    print("Iniciando câmeras...")
-    # Aqui você adiciona o código das câmeras
-    print("✓ Câmeras iniciadas com sucesso!")
-    return True
+def executar_reconhecimento():
+    """Função para iniciar reconhecimento facial"""
+    print("Iniciando reconhecimento facial...")
+    
+    try:
+        # Importa e executa o reconhecimento
+        from reconhecimento.recognize_faces import FaceRecognizer
+        
+        recognizer = FaceRecognizer()
+        recognizer.run()
+        
+        print("✓ Reconhecimento facial finalizado")
+        return True
+        
+    except Exception as e:
+        print(f"✗ Erro ao executar reconhecimento: {e}")
+        return False
 
 
 def main():
@@ -126,7 +137,8 @@ def main():
     parser.add_argument(
         "--treinamento", action="store_true", help="Executar treinamento da IA"
     )
-    parser.add_argument("--cameras", action="store_true", help="Iniciar câmeras")
+    parser.add_argument("--reconhecimento", action="store_true", help="Iniciar reconhecimento facial")
+    parser.add_argument("--cameras", action="store_true", help="Iniciar câmeras (alias para reconhecimento)")
 
     args = parser.parse_args()
 
@@ -140,8 +152,8 @@ def main():
         # Executar ação específica se solicitada
         if args.treinamento:
             return 0 if executar_treinamento() else 1
-        elif args.cameras:
-            return 0 if executar_cameras() else 1
+        elif args.reconhecimento or args.cameras:
+            return 0 if executar_reconhecimento() else 1
         else:
             # Apenas setup do ambiente
             print("✓ Ambiente configurado com sucesso!")
