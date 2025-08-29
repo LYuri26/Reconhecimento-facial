@@ -1,12 +1,16 @@
-# Versões testadas e compatíveis
+# ==================================================
+# Requisitos para Reconhecimento Facial
+# Testado em Python 3.10
+# ==================================================
+
+# Dependências básicas
 numpy==1.26.4
 Pillow==10.1.0
 opencv-contrib-python==4.9.0.80
-imgaug==0.4.0
 mysql-connector-python==8.1.0
 pyfiglet==0.8.post1
 
-# DeepFace e dependências com versões específicas
+# DeepFace e stack de ML
 deepface==0.0.79
 tensorflow==2.15.0
 tf-keras==2.15.1

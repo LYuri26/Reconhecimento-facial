@@ -2,6 +2,12 @@ document.addEventListener("DOMContentLoaded", function () {
   const form = document.getElementById("formCadastro");
   const fileInput = document.getElementById("imagens");
   const previewContainer = document.getElementById("preview-container");
+
+  // Se não estiver na página de cadastro, sair do script
+  if (!form || !fileInput || !previewContainer) {
+    return;
+  }
+
   let selectedFiles = [];
 
   // Adiciona marcação de campos obrigatórios
