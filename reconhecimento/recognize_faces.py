@@ -3,7 +3,7 @@ import time
 import logging
 import os
 import sys
-import numpy as np  # <-- adicionei aqui
+import numpy as np
 from pathlib import Path
 
 # Adiciona o diretório atual ao path para importações relativas
@@ -98,16 +98,21 @@ class FaceRecognizer:
             return False
 
     def run(self):
-        """Loop principal de execução com monitoramento RTSP"""
+        """Loop principal de execução otimizado"""
+        print("=" * 60)
+        print("👁️  INICIANDO SISTEMA DE RECONHECIMENTO FACIAL")
+        print("=" * 60)
+
         if not self.initialize_system():
+            print("❌ Falha ao inicializar o sistema de câmeras")
             return
 
         camera_info = self.camera_manager.get_camera_info()
-        logging.info(f"\nSistema Ativo - {camera_info}")
-        logging.info("Pressione 'q' para sair")
-        logging.info("Pressione 'r' para reconectar RTSP")
-        logging.info("Pressione '+' para reduzir frame skip")
-        logging.info("Pressione '-' para aumentar frame skip")
+        print(f"📷 Câmera: {camera_info}")
+        print("🎮 Controles:")
+        print("   - Pressione 'q' para sair")
+        print("   - Pressione 'r' para reconectar RTSP")
+        print("=" * 60)
 
         # Cria a janela apenas uma vez
         if not self.window_created:
@@ -116,85 +121,47 @@ class FaceRecognizer:
             self.window_created = True
 
         last_time = time.time()
-        last_rtsp_check = time.time()  # Para monitoramento RTSP
         frames_processed = 0
         self.running = True
 
-        # Frame padrão para exibir quando não há frames da câmera
-        default_frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-        cv2.putText(
-            default_frame,
-            "Aguardando frames da camera...",
-            (50, self.height // 2),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (255, 255, 255),
-            2,
-        )
-
         while self.running:
             try:
-                # Verifica se a câmera RTSP ainda está funcionando
-                current_time = time.time()
-                if (
-                    self.camera_manager.camera_type == "rtsp"
-                    and current_time - last_rtsp_check > 10
-                ):  # Verifica a cada 10 segundos
-                    last_rtsp_check = current_time
-
-                    # Verifica se há frames na fila
-                    frames_count = self.camera_manager.frame_queue.qsize()
-                    logging.debug(f"Monitor RTSP - Frames na fila: {frames_count}")
-
-                    if frames_count == 0:
-                        logging.warning(
-                            "RTSP parece estar inativa, tentando reconectar..."
-                        )
-                        self.reconnect_camera()
-                        # Atualiza a informação da câmera após reconexão
-                        camera_info = self.camera_manager.get_camera_info()
-
-                # Obtém frame da câmera
+                # Obtém frame da câmera de forma não bloqueante
                 frame = self.camera_manager.get_frame()
-                display_frame = default_frame.copy()
 
                 if frame is not None:
                     # Processa o frame
                     processed_frame = self.face_processor.process_frame(frame)
 
                     if processed_frame is not None:
-                        display_frame = processed_frame
-                        # Adiciona informação da câmera no frame
-                        camera_type = "RTSP" if "RTSP" in camera_info else "WEBCAM"
-                        cv2.putText(
-                            display_frame,
-                            f"Camera: {camera_type}",
-                            (10, 30),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.7,
-                            (255, 255, 255),
-                            2,
-                        )
-
-                        # Adiciona informação de frames na fila (apenas para debug)
-                        if logging.getLogger().getEffectiveLevel() == logging.DEBUG:
-                            queue_size = self.camera_manager.frame_queue.qsize()
-                            cv2.putText(
-                                display_frame,
-                                f"Fila: {queue_size} frames",
-                                (10, 60),
-                                cv2.FONT_HERSHEY_SIMPLEX,
-                                0.5,
-                                (255, 255, 255),
-                                1,
-                            )
-
+                        # Exibe o frame processado
+                        cv2.imshow("Reconhecimento Facial", processed_frame)
                         frames_processed += 1
+                else:
+                    # Se não há frame, mostra mensagem de espera
+                    waiting_frame = np.zeros(
+                        (self.height, self.width, 3), dtype=np.uint8
+                    )
+                    cv2.putText(
+                        waiting_frame,
+                        "Aguardando frames da camera...",
+                        (50, self.height // 2),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (255, 255, 255),
+                        2,
+                    )
+                    cv2.imshow("Reconhecimento Facial", waiting_frame)
 
-                # Exibe o frame
-                cv2.imshow("Reconhecimento Facial", display_frame)
+                # Verifica se o usuário fechou a janela (clique no X)
+                if (
+                    cv2.getWindowProperty("Reconhecimento Facial", cv2.WND_PROP_VISIBLE)
+                    < 1
+                ):
+                    print("\n🖱️  Janela fechada pelo usuário")
+                    break
 
-                # Cálculo de FPS
+                # Cálculo de FPS a cada segundo
                 current_time = time.time()
                 if current_time - last_time >= 1.0:
                     fps = frames_processed / (current_time - last_time)
@@ -202,36 +169,17 @@ class FaceRecognizer:
                     frames_processed = 0
                     last_time = current_time
 
-                # Controles de teclado
+                # Controles de teclado com waitKey mais curto
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord("q"):
+                    print("\n⌨️  Tecla 'q' pressionada")
                     break
                 elif key == ord("r"):  # Tecla 'r' para tentar reconectar RTSP
+                    print("🔄 Tentando reconectar câmera RTSP...")
                     logging.info("Tentando reconectar câmera RTSP...")
                     self.reconnect_camera()
                     # Atualiza a informação da câmera após reconexão
                     camera_info = self.camera_manager.get_camera_info()
-                    last_rtsp_check = time.time()  # Reseta o timer de verificação
-                elif key == ord("+"):
-                    self.camera_manager.frame_skip = max(
-                        0, self.camera_manager.frame_skip - 1
-                    )
-                    logging.info(
-                        f"Frame skip reduzido para {self.camera_manager.frame_skip}"
-                    )
-                elif key == ord("-"):
-                    self.camera_manager.frame_skip += 1
-                    logging.info(
-                        f"Frame skip aumentado para {self.camera_manager.frame_skip}"
-                    )
-                elif key == ord("d"):  # Tecla 'd' para toggle debug mode
-                    current_level = logging.getLogger().getEffectiveLevel()
-                    if current_level == logging.INFO:
-                        logging.getLogger().setLevel(logging.DEBUG)
-                        logging.info("Modo debug ativado")
-                    else:
-                        logging.getLogger().setLevel(logging.INFO)
-                        logging.info("Modo debug desativado")
 
             except Exception as e:
                 logging.error(f"Erro no loop principal: {str(e)}")
@@ -252,8 +200,10 @@ class FaceRecognizer:
             self.face_processor = FaceProcessor()
 
             if self.initialize_system():
+                print("✅ Reconexão bem-sucedida!")
                 logging.info("Reconexão bem-sucedida!")
             else:
+                print("⚠️  Falha na reconexão, usando webcam")
                 logging.warning("Falha na reconexão, usando webcam")
 
         except Exception as e:
@@ -277,6 +227,10 @@ class FaceRecognizer:
         except Exception as e:
             logging.error(f"Erro ao fechar janelas: {str(e)}")
 
+        print("=" * 60)
+        print("🛑 SISTEMA DE RECONHECIMENTO ENCERRADO")
+        print("✅ Recursos liberados com segurança")
+        print("=" * 60)
         logging.info("Sistema finalizado com segurança")
 
 
@@ -284,7 +238,14 @@ if __name__ == "__main__":
     try:
         recognizer = FaceRecognizer()
         recognizer.run()
+    except KeyboardInterrupt:
+        print("\n\n🛑 Interrompido pelo usuário (Ctrl+C)")
+        print("✅ Sistema encerrado com segurança")
     except Exception as e:
+        print(f"\n❌ ERRO FATAL: {str(e)}")
         logging.error(f"ERRO FATAL: {str(e)}")
     finally:
-        cv2.destroyAllWindows()
+        try:
+            cv2.destroyAllWindows()
+        except:
+            pass

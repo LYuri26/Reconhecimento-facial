@@ -3,6 +3,7 @@ import numpy as np
 import pickle
 import logging
 import os
+import time
 from deepface import DeepFace
 from mysql.connector import Error
 import mysql.connector
@@ -13,18 +14,31 @@ class FaceProcessor:
         self.MODEL_PATH = model_path
         self.THRESHOLD = threshold
         self.EMBEDDING_MODEL = "Facenet512"
-        self.DETECTOR = "opencv"
+        self.DETECTOR = "opencv"  # Usar opencv que é mais rápido
         self.model_loaded = False
         self.embeddings_db = {}
         self.db_connection = None
+
+        # Otimizações de performance
+        self.last_processed_time = 0
+        self.processing_interval = 0.3  # Processa a cada 300ms (3 FPS)
+        self.cache_size = 5
+        self.embedding_cache = {}
+        self.last_faces = []
+
+        # Carrega o modelo na inicialização
+        self.load_model()
+        self.initialize_database()
 
     def load_model(self):
         """Carrega o modelo de reconhecimento facial"""
         try:
             if not os.path.exists(self.MODEL_PATH):
-                raise FileNotFoundError(
-                    f"Arquivo do modelo não encontrado: {self.MODEL_PATH}"
+                logging.warning(
+                    "Arquivo do modelo não encontrado. Sistema sem treinamento."
                 )
+                self.model_loaded = False
+                return False
 
             with open(self.MODEL_PATH, "rb") as f:
                 data = pickle.load(f)
@@ -58,6 +72,7 @@ class FaceProcessor:
                 user="root",
                 password="",
                 database="reconhecimento_facial",
+                autocommit=True,
             )
             logging.info("Conexão com o banco estabelecida")
             return True
@@ -95,15 +110,15 @@ class FaceProcessor:
             emb1 = np.array(emb1, dtype=np.float32)
             emb2 = np.array(emb2, dtype=np.float32)
 
-            # Normaliza os embeddings (novamente, para garantir)
+            # Normaliza os embeddings
             emb1 = emb1 / np.linalg.norm(emb1)
             emb2 = emb2 / np.linalg.norm(emb2)
 
-            # Calcula a similaridade cosseno (deve estar entre -1 e 1)
+            # Calcula a similaridade cosseno
             similarity = np.dot(emb1, emb2)
 
-            # Ajusta para ficar entre 0 e 1 (se necessário)
-            similarity = (similarity + 1) / 2
+            # Ajusta para ficar entre 0 e 1
+            similarity = max(0.0, min(1.0, (similarity + 1) / 2))
 
             return similarity
         except Exception as e:
@@ -111,22 +126,31 @@ class FaceProcessor:
             return 0.0
 
     def safe_get_embedding(self, face_img):
-        """Gera embedding facial com mais verificações"""
+        """Gera embedding facial com cache para melhor performance"""
         try:
             if not isinstance(face_img, np.ndarray) or face_img.size == 0:
                 return None
+
+            # Verifica tamanho mínimo
             if face_img.shape[0] < 50 or face_img.shape[1] < 50:
                 return None
+
+            # Gera hash da imagem para cache
+            img_hash = hash(face_img.tobytes())
+
+            # Verifica se já está em cache
+            if img_hash in self.embedding_cache:
+                return self.embedding_cache[img_hash]
 
             # Converte para RGB
             rgb_img = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
 
-            # Gera o embedding
+            # Gera o embedding (mais rápido com enforce_detection=False)
             embedding_obj = DeepFace.represent(
                 img_path=rgb_img,
                 model_name=self.EMBEDDING_MODEL,
-                enforce_detection=False,
-                detector_backend="skip",
+                enforce_detection=False,  # Não tenta detectar rosto novamente
+                detector_backend="skip",  # Pula detecção, já temos o rosto
                 normalization="base",
             )
 
@@ -137,21 +161,19 @@ class FaceProcessor:
 
             # Verifica se o embedding é válido
             if np.all(embedding == 0):
-                logging.warning("Embedding gerado é nulo/zero")
                 return None
 
-            # Normalização rigorosa
+            # Normalização
             norm = np.linalg.norm(embedding)
             if norm == 0:
                 return None
 
             embedding = embedding / norm
 
-            # Log para debug
-            logging.debug(
-                f"Embedding gerado - Norma: {np.linalg.norm(embedding):.4f}, "
-                f"Valores: min={np.min(embedding):.4f}, max={np.max(embedding):.4f}"
-            )
+            # Adiciona ao cache (mantém tamanho limitado)
+            if len(self.embedding_cache) >= self.cache_size:
+                self.embedding_cache.pop(next(iter(self.embedding_cache)))
+            self.embedding_cache[img_hash] = embedding
 
             return embedding
 
@@ -159,102 +181,153 @@ class FaceProcessor:
             logging.error(f"Erro na geração de embedding: {str(e)}")
             return None
 
-    def check_embeddings_db(self):
-        """Verifica a qualidade dos embeddings armazenados"""
-        if not self.embeddings_db:
-            logging.error("Nenhum embedding encontrado no banco de dados")
-            return False
+    def detect_faces_fast(self, frame):
+        """Detecção de faces otimizada"""
+        try:
+            # Usa o detector do DeepFace mas com configurações mais rápidas
+            faces = DeepFace.extract_faces(
+                img_path=frame,
+                detector_backend=self.DETECTOR,
+                enforce_detection=False,  # Não falha se não detectar rostos
+                align=False,  # Não alinha para economizar processamento
+            )
 
-        for user_id, user_data in self.embeddings_db.items():
-            embedding = user_data["embedding"]
-            norm = np.linalg.norm(embedding)
-            logging.info(f"Usuário {user_id} - Norma do embedding: {norm:.4f}")
+            if not isinstance(faces, list):
+                return []
 
-            if norm < 0.9 or norm > 1.1:  # Deve ser próximo de 1 após normalização
-                logging.warning(
-                    f"Embedding do usuário {user_id} não está normalizado corretamente!"
-                )
+            detected_faces = []
+            for face in faces:
+                if face and face.get("facial_area"):
+                    area = face["facial_area"]
+                    detected_faces.append(
+                        {
+                            "x": area["x"],
+                            "y": area["y"],
+                            "w": area["w"],
+                            "h": area["h"],
+                            "confidence": area.get("confidence", 0),
+                        }
+                    )
 
-        return True
+            return detected_faces
+
+        except Exception as e:
+            logging.error(f"Erro na detecção de faces: {str(e)}")
+            return []
 
     def process_frame(self, frame):
-        """Processa um frame para reconhecimento facial"""
+        """Processa um frame para reconhecimento facial com otimizações"""
         try:
             if frame is None or frame.size == 0:
                 return frame
 
             display_frame = frame.copy()
+            current_time = time.time()
 
+            # Limita a taxa de processamento para melhor performance
+            if current_time - self.last_processed_time < self.processing_interval:
+                # Reutiliza a detecção anterior se disponível
+                if self.last_faces:
+                    for face_data in self.last_faces:
+                        x, y, w, h = (
+                            face_data["x"],
+                            face_data["y"],
+                            face_data["w"],
+                            face_data["h"],
+                        )
+                        label = face_data.get("label", "Processando...")
+                        color = face_data.get("color", (0, 255, 255))
+
+                        cv2.rectangle(display_frame, (x, y), (x + w, y + h), color, 2)
+                        text_y = max(y - 10, 20)
+                        cv2.putText(
+                            display_frame,
+                            label,
+                            (x, text_y),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.6,
+                            color,
+                            2,
+                        )
+                return display_frame
+
+            self.last_processed_time = current_time
+            self.last_faces = []  # Limpa faces anteriores
+
+            # Verifica se o modelo foi carregado
             if not self.model_loaded:
-                return display_frame
-
-            try:
-                faces = DeepFace.extract_faces(
-                    img_path=frame,
-                    detector_backend=self.DETECTOR,
-                    enforce_detection=False,
-                    align=True,
+                cv2.putText(
+                    display_frame,
+                    "SISTEMA SEM TREINAMENTO",
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 0, 255),
+                    2,
                 )
-            except Exception as e:
-                logging.error(f"Erro na detecção de faces: {str(e)}")
                 return display_frame
 
-            if not isinstance(faces, list):
+            # Detecta faces
+            faces = self.detect_faces_fast(frame)
+            if not faces:
                 return display_frame
 
             for face in faces:
-                if not face or not face.get("facial_area"):
+                x, y, w, h = face["x"], face["y"], face["w"], face["h"]
+
+                # Extrai a região do rosto
+                face_region = frame[y : y + h, x : x + w]
+                if face_region.size == 0:
                     continue
 
-                area = face["facial_area"]
-                x, y, w, h = area["x"], area["y"], area["w"], area["h"]
-                face_region = frame[y : y + h, x : x + w]
-
+                # Gera embedding
                 live_emb = self.safe_get_embedding(face_region)
                 if live_emb is None:
+                    # Mostra que está detectando mas não reconheceu ainda
+                    label = "Detectado..."
+                    color = (0, 255, 255)  # Amarelo
+                    self.last_faces.append(
+                        {"x": x, "y": y, "w": w, "h": h, "label": label, "color": color}
+                    )
                     continue
-
-                # Adicionando log de debug para mostrar o processamento
-                logging.debug(f"Processando face em ({x},{y}) - {w}x{h}")
 
                 best_match = None
                 best_score = 0
-                all_scores = {}  # Para armazenar todos os scores
 
+                # Compara com embeddings do banco
                 for user_id, user_data in self.embeddings_db.items():
                     score = self.calculate_similarity(live_emb, user_data["embedding"])
-                    all_scores[user_id] = score
 
                     if score > best_score and score > self.THRESHOLD:
                         best_score = score
                         best_match = user_id
 
-                # Log detalhado de todos os scores calculados
-                logging.info("Scores de similaridade calculados:")
-                for user_id, score in all_scores.items():
-                    user_info = self.get_user_info(user_id)
-                    logging.info(f"  {user_info['nome']}: {score:.4f}")
-
-                label = "Desconhecido"
+                # Define label e cor
+                label = "Nao identificado"
                 color = (0, 0, 255)  # Vermelho
 
                 if best_match:
                     user_info = self.get_user_info(best_match)
-                    label = f"{user_info['nome']} ({best_score:.2f})"
+                    label = f"{user_info['nome']} {user_info['sobrenome']} ({best_score:.2f})"
                     color = (0, 255, 0)  # Verde
-                    logging.info(
-                        f"Melhor correspondência: {user_info['nome']} com score {best_score:.4f}"
-                    )
+                    logging.info(f"Reconhecido: {label}")
 
+                # Armazena para reutilização no próximo frame
+                self.last_faces.append(
+                    {"x": x, "y": y, "w": w, "h": h, "label": label, "color": color}
+                )
+
+                # Desenha retângulo e label
                 cv2.rectangle(display_frame, (x, y), (x + w, y + h), color, 2)
+                text_y = max(y - 10, 20)
                 cv2.putText(
                     display_frame,
                     label,
-                    (x, y - 10),
+                    (x, text_y),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.6,
                     color,
-                    1,
+                    2,
                 )
 
             return display_frame

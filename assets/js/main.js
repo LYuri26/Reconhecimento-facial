@@ -71,7 +71,7 @@ function executarScriptPython(acao) {
   modal.show();
 
   // Atualizar progresso inicial
-  atualizarProgresso(10, "Preparando ambiente...");
+  atualizarProgresso(5, "Iniciando sistema...", "iniciando");
 
   // Desabilitar botões durante a execução
   atualizarEstadoBotoes(false);
@@ -96,67 +96,187 @@ function iniciarConexaoTempoReal(
   // Fechar conexão anterior se existir
   if (eventSource) {
     eventSource.close();
+    eventSource = null;
   }
 
-  // URL correta para o PHP - usando POST em vez de GET
-  const url = "./src/controller/main.php";
+  // URL com timestamp para evitar cache
+  const url = `./src/controller/main.php?acao=${acao}&real_time=1&t=${Date.now()}`;
 
-  // Criar nova conexão SSE usando POST
-  eventSource = new EventSource(`${url}?acao=${acao}&real_time=1`);
+  console.log(`Iniciando conexão SSE: ${url}`);
+
+  eventSource = new EventSource(url);
+
+  // Adicionar timeout para reconexão
+  let connectionTimeout = setTimeout(() => {
+    if (eventSource && eventSource.readyState !== EventSource.CLOSED) {
+      console.error("Timeout na conexão SSE");
+      eventSource.close();
+      eventSource = null;
+      mostrarNotificacao("error", "Timeout de conexão com o servidor");
+      atualizarEstadoBotoes(true);
+
+      // Adicionar mensagem no console
+      if (consoleOutput) {
+        consoleOutput.innerHTML +=
+          "> ERRO: Timeout na conexão com o servidor\n";
+        consoleOutput.scrollTop = consoleOutput.scrollHeight;
+      }
+    }
+  }, 30000); // 30 segundos
+
+  eventSource.onopen = function () {
+    console.log("Conexão SSE estabelecida com sucesso");
+    clearTimeout(connectionTimeout);
+
+    // Resetar timeout para 5 minutos após conexão estabelecida
+    connectionTimeout = setTimeout(() => {
+      if (eventSource && eventSource.readyState !== EventSource.CLOSED) {
+        console.error("Timeout após conexão estabelecida");
+        eventSource.close();
+        eventSource = null;
+        mostrarNotificacao("error", "Processo está demorando muito");
+
+        if (consoleOutput) {
+          consoleOutput.innerHTML += "> AVISO: Processo ainda em execução...\n";
+          consoleOutput.scrollTop = consoleOutput.scrollHeight;
+        }
+      }
+    }, 300000); // 5 minutos
+  };
 
   eventSource.onmessage = function (event) {
     try {
+      clearTimeout(connectionTimeout); // Resetar timeout a cada mensagem
+
       const data = JSON.parse(event.data);
 
-      if (data.output) {
-        // Adicionar saída ao console
-        consoleOutput.innerHTML += data.output;
+      // Verificar se há saída para o console
+      if (data.output && consoleOutput) {
+        consoleOutput.innerHTML += data.output + "\n";
         consoleOutput.scrollTop = consoleOutput.scrollHeight;
+      }
 
-        // Atualizar progresso baseado na saída
-        if (data.output.includes("✓")) {
-          const currentProgress = parseInt(
-            progressBar.getAttribute("aria-valuenow")
-          );
-          atualizarProgresso(Math.min(currentProgress + 20, 100), data.output);
+      // Atualizar progresso baseado nos dados recebidos
+      if (data.progress !== undefined && progressBar && feedbackMessage) {
+        atualizarProgresso(
+          data.progress,
+          getStageMessage(data.stage),
+          data.stage
+        );
+      }
+
+      // Verificar se é mensagem de erro
+      if (data.error) {
+        console.error("Erro recebido:", data.error);
+        if (feedbackMessage) {
+          feedbackMessage.textContent = "Erro: " + data.error;
         }
+        if (consoleOutput) {
+          consoleOutput.innerHTML += "> ERRO: " + data.error + "\n";
+          consoleOutput.scrollTop = consoleOutput.scrollHeight;
+        }
+        mostrarNotificacao("error", "Erro durante a execução: " + data.error);
 
-        // Verificar se é mensagem de conclusão
-        if (
-          data.output.includes("concluído") ||
-          data.output.includes("sucesso")
-        ) {
-          atualizarProgresso(100, "Processamento concluído com sucesso!");
+        // Re-habilitar botões em caso de erro
+        atualizarEstadoBotoes(true);
+
+        // Fechar conexão
+        if (eventSource) {
+          eventSource.close();
+          eventSource = null;
         }
       }
 
+      // Verificar se é mensagem de conclusão
       if (data.finished) {
-        // Processo finalizado
-        finalizarProcesso(acao, consoleOutput, modal);
+        console.log("Processo finalizado com código:", data.return_code);
+
+        // Fechar conexão SSE
+        if (eventSource) {
+          eventSource.close();
+          eventSource = null;
+        }
+
+        clearTimeout(connectionTimeout);
+
+        // Executar ação específica após conclusão
+        finalizarProcesso(acao, consoleOutput, modal, data.return_code);
       }
     } catch (e) {
-      console.error("Erro ao processar evento:", e);
+      console.error("Erro ao processar evento SSE:", e);
+      // Tentar processar como texto simples se não for JSON
+      if (event.data && consoleOutput) {
+        consoleOutput.innerHTML += "> " + event.data + "\n";
+        consoleOutput.scrollTop = consoleOutput.scrollHeight;
+      }
     }
   };
 
   eventSource.onerror = function (error) {
     console.error("Erro na conexão SSE:", error);
-    atualizarProgresso(0, "Erro na comunicação");
-    consoleOutput.innerHTML += "> ERRO: Conexão perdida com o servidor\n";
-    mostrarNotificacao("error", "Erro de comunicação com o servidor");
+    clearTimeout(connectionTimeout);
 
-    // Re-habilitar botões
-    atualizarEstadoBotoes(true);
-
-    // Fechar conexão
+    // Verificar estado da conexão
     if (eventSource) {
-      eventSource.close();
-      eventSource = null;
+      console.log("Estado da conexão SSE:", eventSource.readyState);
+
+      // Só tratar como erro se a conexão foi fechada inesperadamente
+      if (eventSource.readyState === EventSource.CLOSED) {
+        // Tentar reconectar após 3 segundos se o modal ainda estiver aberto
+        setTimeout(() => {
+          const modalElement = document.getElementById("modalFeedback");
+          if (modalElement && modalElement.classList.contains("show")) {
+            console.log("Tentando reconexão automática...");
+
+            if (consoleOutput) {
+              consoleOutput.innerHTML += "> Reconectando com servidor...\n";
+              consoleOutput.scrollTop = consoleOutput.scrollHeight;
+            }
+
+            iniciarConexaoTempoReal(
+              acao,
+              progressBar,
+              feedbackMessage,
+              consoleOutput,
+              modal
+            );
+          }
+        }, 3000);
+      }
     }
   };
+
+  // Adicionar event listener para fechamento do modal
+  const modalElement = document.getElementById("modalFeedback");
+  if (modalElement) {
+    modalElement.addEventListener("hidden.bs.modal", function () {
+      // Fechar conexão SSE quando o modal for fechado
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+      clearTimeout(connectionTimeout);
+    });
+  }
 }
 
-function finalizarProcesso(acao, consoleOutput, modal) {
+function getStageMessage(stage) {
+  const stageMessages = {
+    iniciando: "Iniciando sistema...",
+    criando_venv: "Criando ambiente virtual...",
+    instalando_dependencias: "Instalando dependências...",
+    processando_imagens: "Processando imagens...",
+    gerando_embeddings: "Gerando embeddings faciais...",
+    salvando_modelo: "Salvando modelo treinado...",
+    concluido: "Processamento concluído!",
+    finalizado: "Processo finalizado",
+    erro: "Erro durante o processo",
+  };
+
+  return stageMessages[stage] || "Processando...";
+}
+
+function finalizarProcesso(acao, consoleOutput, modal, returnCode) {
   // Fechar conexão SSE
   if (eventSource) {
     eventSource.close();
@@ -165,18 +285,29 @@ function finalizarProcesso(acao, consoleOutput, modal) {
 
   // Executar ação específica após conclusão
   if (acao === "treinamento_ia") {
-    consoleOutput.innerHTML +=
-      "> Treinamento de IA concluído. Modelo pronto para uso.\n";
-    mostrarNotificacao("success", "Treinamento concluído com sucesso!");
+    if (returnCode === 0) {
+      consoleOutput.innerHTML +=
+        "> Treinamento de IA concluído. Modelo pronto para uso.\n";
+      mostrarNotificacao("success", "Treinamento concluído com sucesso!");
+    } else {
+      consoleOutput.innerHTML +=
+        "> Erro durante o treinamento. Verifique os logs.\n";
+      mostrarNotificacao("error", "Falha no treinamento!");
+    }
   } else if (acao === "iniciar_cameras") {
-    consoleOutput.innerHTML +=
-      "> Sistema de reconhecimento facial inicializado.\n";
-    consoleOutput.innerHTML += "> Verificando câmeras disponíveis...\n";
-    mostrarNotificacao("success", "Sistema de câmeras iniciado!");
+    if (returnCode === 0) {
+      consoleOutput.innerHTML +=
+        "> Sistema de reconhecimento facial inicializado.\n";
+      consoleOutput.innerHTML += "> Verificando câmeras disponíveis...\n";
+      mostrarNotificacao("success", "Sistema de câmeras iniciado!");
 
-    // Atualizar estado das câmeras
-    camerasAtivas = true;
-    atualizarEstadoBotoes(true);
+      // Atualizar estado das câmeras
+      camerasAtivas = true;
+    } else {
+      consoleOutput.innerHTML +=
+        "> Erro ao iniciar câmeras. Verifique os logs.\n";
+      mostrarNotificacao("error", "Falha ao iniciar câmeras!");
+    }
   }
 
   // Re-habilitar botões
@@ -187,7 +318,7 @@ function formatarOutput(output) {
   return "> " + output.replace(/\n/g, "\n> ");
 }
 
-function atualizarProgresso(percentual, mensagem) {
+function atualizarProgresso(percentual, mensagem, stage) {
   const progressBar = document.getElementById("progressBar");
   const feedbackMessage = document.getElementById("feedbackMessage");
 
@@ -198,19 +329,22 @@ function atualizarProgresso(percentual, mensagem) {
   progressBar.setAttribute("aria-valuenow", percentual);
   feedbackMessage.textContent = mensagem;
 
-  // Atualizar a classe da barra de progresso baseada no percentual
-  if (percentual < 30) {
+  // Atualizar a classe da barra de progresso baseada no estágio
+  if (stage === "erro") {
+    progressBar.className = "progress-bar bg-danger";
+  } else if (percentual < 30) {
     progressBar.className =
       "progress-bar progress-bar-striped progress-bar-animated bg-danger";
   } else if (percentual < 70) {
     progressBar.className =
       "progress-bar progress-bar-striped progress-bar-animated bg-warning";
-  } else {
+  } else if (percentual < 100) {
     progressBar.className =
-      "progress-bar progress-bar-striped progress-bar-animated bg-success";
+      "progress-bar progress-bar-striped progress-bar-animated bg-info";
+  } else {
+    progressBar.className = "progress-bar bg-success";
   }
 }
-
 function atualizarEstadoBotoes(habilitado) {
   const botoes = ["btnTreinamentoIA", "btnIniciarCameras"];
 

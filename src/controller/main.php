@@ -11,6 +11,8 @@ $response = [
     'success' => false,
     'error' => '',
     'output' => '',
+    'progress' => 0,
+    'stage' => '',
     'real_time' => false
 ];
 
@@ -169,13 +171,16 @@ echo json_encode($response);
 
 function executarComandoTempoReal($pythonCommand, $scriptPath, $acao, $projectRoot)
 {
+    // Configurar tempo de execução ilimitado
+    set_time_limit(0);
+    ignore_user_abort(true);
+
     // Primeiro, tentar encontrar o Python do venv
     $venvPythonPath = encontrarPythonVenv($projectRoot);
     if ($venvPythonPath) {
         $pythonCommand = $venvPythonPath;
     }
 
-    // Resto do código permanece igual...
     $descriptorspec = array(
         0 => array("pipe", "r"),  // stdin
         1 => array("pipe", "w"),  // stdout
@@ -198,45 +203,141 @@ function executarComandoTempoReal($pythonCommand, $scriptPath, $acao, $projectRo
     }
     $comando .= ' 2>&1';
 
+    // Configurar headers para streaming ANTES de qualquer output
+    header('Content-Type: text/event-stream');
+    header('Cache-Control: no-cache');
+    header('X-Accel-Buffering: no');
+    header('Access-Control-Allow-Origin: *');
+    header('Access-Control-Allow-Methods: GET');
+
+    // Enviar headers imediatamente
+    ob_flush();
+    flush();
+
     $process = proc_open($comando, $descriptorspec, $pipes, $projectRoot);
 
     if (is_resource($process)) {
         // Fechar stdin já que não vamos usar
         fclose($pipes[0]);
 
-        // Configurar headers para streaming
-        header('Content-Type: text/event-stream');
-        header('Cache-Control: no-cache');
-        header('X-Accel-Buffering: no'); // Desabilitar buffering do Nginx
-        header('Access-Control-Allow-Origin: *');
-        header('Access-Control-Allow-Methods: GET');
+        // Configurar streams como não-bloqueantes
+        stream_set_blocking($pipes[1], false);
+        stream_set_blocking($pipes[2], false);
 
-        // Ler a saída em tempo real
-        while (!feof($pipes[1])) {
-            $output = fgets($pipes[1]);
-            if ($output !== false) {
-                // Enviar como evento SSE
-                echo "data: " . json_encode(['output' => $output]) . "\n\n";
+        // Variáveis para controle de progresso
+        $currentStage = 'iniciando';
+        $currentProgress = 0;
+        $stageProgress = [
+            'iniciando' => 5,
+            'criando_venv' => 15,
+            'instalando_dependencias' => 40,
+            'processando_imagens' => 60,
+            'gerando_embeddings' => 80,
+            'salvando_modelo' => 95,
+            'concluido' => 100
+        ];
+
+        $isRunning = true;
+        $startTime = time();
+
+        // Loop principal de leitura
+        while ($isRunning) {
+            // Verificar se o processo ainda está rodando
+            $status = proc_get_status($process);
+            if (!$status['running']) {
+                $isRunning = false;
+                break;
+            }
+
+            // Verificar timeout (30 minutos)
+            if (time() - $startTime > 1800) {
+                $isRunning = false;
+                echo "data: " . json_encode([
+                    'error' => 'Timeout: processo excedeu 30 minutos',
+                    'finished' => true
+                ]) . "\n\n";
                 ob_flush();
                 flush();
-
-                // Pequena pausa para não sobrecarregar
-                usleep(10000); // 10ms
+                break;
             }
+
+            // Ler stdout
+            $output = fgets($pipes[1]);
+            if ($output !== false) {
+                $output = trim($output);
+                if (!empty($output)) {
+                    // Detectar estágios do processo
+                    $lowerOutput = strtolower($output);
+
+                    if (strpos($lowerOutput, 'criando ambiente virtual') !== false) {
+                        $currentStage = 'criando_venv';
+                    } elseif (strpos($lowerOutput, 'instalando dependências') !== false) {
+                        $currentStage = 'instalando_dependencias';
+                    } elseif (strpos($lowerOutput, 'processando imagem') !== false) {
+                        $currentStage = 'processando_imagens';
+                    } elseif (strpos($lowerOutput, 'gerando embedding') !== false) {
+                        $currentStage = 'gerando_embeddings';
+                    } elseif (strpos($lowerOutput, 'salvando modelo') !== false) {
+                        $currentStage = 'salvando_modelo';
+                    } elseif (
+                        strpos($lowerOutput, 'concluído') !== false ||
+                        strpos($lowerOutput, 'sucesso') !== false
+                    ) {
+                        $currentStage = 'concluido';
+                    }
+
+                    // Atualizar progresso
+                    $currentProgress = $stageProgress[$currentStage] ?? $currentProgress;
+
+                    // Enviar evento
+                    $eventData = [
+                        'output' => $output,
+                        'progress' => $currentProgress,
+                        'stage' => $currentStage
+                    ];
+
+                    echo "data: " . json_encode($eventData) . "\n\n";
+                    ob_flush();
+                    flush();
+                }
+            }
+
+            // Pequena pausa para não sobrecarregar
+            usleep(100000); // 100ms
         }
 
-        // Fechar pipes e processo
+        // Ler qualquer output restante
+        $remainingOutput = stream_get_contents($pipes[1]);
+        if (!empty($remainingOutput)) {
+            $lines = explode("\n", $remainingOutput);
+            foreach ($lines as $line) {
+                $line = trim($line);
+                if (!empty($line)) {
+                    echo "data: " . json_encode(['output' => $line]) . "\n\n";
+                }
+            }
+            ob_flush();
+            flush();
+        }
+
+        // Fechar pipes
         fclose($pipes[1]);
         fclose($pipes[2]);
+
+        // Obter código de retorno
         $returnCode = proc_close($process);
 
         // Enviar evento de finalização
-        echo "data: " . json_encode(['finished' => true, 'return_code' => $returnCode]) . "\n\n";
+        echo "data: " . json_encode([
+            'finished' => true,
+            'return_code' => $returnCode,
+            'progress' => 100,
+            'stage' => 'finalizado',
+            'output' => "Processo finalizado com código: $returnCode"
+        ]) . "\n\n";
         ob_flush();
         flush();
     } else {
-        // Erro ao abrir processo
-        header('Content-Type: text/event-stream');
         echo "data: " . json_encode(['error' => 'Erro ao iniciar processo']) . "\n\n";
         ob_flush();
         flush();
