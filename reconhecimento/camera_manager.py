@@ -50,17 +50,54 @@ class CameraManager:
             return False
 
     def initialize_rtsp(self):
-        """Inicialização da câmera RTSP"""
+        """Inicialização da câmera RTSP com melhor logging"""
         try:
-            # Comando FFmpeg para captura RTSP
+            # Primeiro testa a conexão com timeout
+            test_cmd = [
+                "ffmpeg",
+                "-rtsp_transport",
+                "tcp",
+                "-timeout",
+                "5000000",
+                "-i",
+                self.rtsp_url,
+                "-t",
+                "3",  # Apenas 3 segundos de teste
+                "-f",
+                "null",
+                "-",
+            ]
+
+            logging.info("Testando conexão RTSP...")
+            result = subprocess.run(test_cmd, capture_output=True, timeout=10)
+
+            if result.returncode != 0:
+                error_msg = result.stderr.decode()
+                logging.error(f"Teste de conexão RTSP falhou: {error_msg}")
+
+                # Verifica erros comuns
+                if "Connection refused" in error_msg:
+                    logging.error("Erro: Conexão recusada - verifique IP/porta")
+                elif "Unauthorized" in error_msg:
+                    logging.error("Erro: Não autorizado - verifique usuário/senha")
+                elif "Not found" in error_msg:
+                    logging.error("Erro: URL não encontrada - verifique o caminho RTSP")
+                elif "Connection timed out" in error_msg:
+                    logging.error("Erro: Timeout - verifique conectividade de rede")
+
+                return False
+
+            # Se o teste passou, inicia a captura contínua
             ffmpeg_cmd = [
                 "ffmpeg",
                 "-rtsp_transport",
                 "tcp",
+                "-timeout",
+                "5000000",
                 "-i",
                 self.rtsp_url,
                 "-loglevel",
-                "error",
+                "info",  # Mais informações para debug
                 "-f",
                 "rawvideo",
                 "-pix_fmt",
@@ -72,7 +109,7 @@ class CameraManager:
                 "-",
             ]
 
-            # Inicia o processo FFmpeg
+            logging.info(f"Iniciando FFmpeg com comando: {' '.join(ffmpeg_cmd)}")
             self.proc = subprocess.Popen(
                 ffmpeg_cmd,
                 stdout=subprocess.PIPE,
@@ -80,17 +117,31 @@ class CameraManager:
                 bufsize=10**8,
             )
 
-            # Testa a conexão
-            if not self.test_rtsp_connection(timeout=5):
-                raise RuntimeError("Não foi possível conectar à câmera RTSP")
+            # Aguarda inicialização e lê stderr para debug
+            time.sleep(2)
+            stderr_lines = []
+            for _ in range(10):  # Lê as primeiras linhas de erro
+                if self.proc.stderr.readable():
+                    line = self.proc.stderr.readline().decode().strip()
+                    if line:
+                        stderr_lines.append(line)
+                        logging.info(f"FFmpeg: {line}")
+
+            # Verifica se o processo está rodando
+            if self.proc.poll() is not None:
+                error_output = "\n".join(stderr_lines)
+                logging.error(f"FFmpeg terminou. Erro: {error_output}")
+                return False
 
             self.camera_initialized = True
             self.running = True
             threading.Thread(target=self.capture_rtsp_frames, daemon=True).start()
+
+            logging.info("Captura RTSP iniciada com sucesso")
             return True
 
         except Exception as e:
-            logging.warning(f"Falha na câmera RTSP: {str(e)}")
+            logging.error(f"Falha crítica na câmera RTSP: {str(e)}")
             self.cleanup_rtsp()
             return False
 
@@ -170,70 +221,121 @@ class CameraManager:
         """Captura frames da câmera RTSP continuamente"""
         frame_size = self.width * self.height * 3
         frame_counter = 0
+        error_count = 0
 
         while self.running and self.camera_initialized and self.camera_type == "rtsp":
             try:
+                # Lê stderr para debug
+                if self.proc.stderr and error_count < 5:
+                    err_line = self.proc.stderr.readline().decode().strip()
+                    if err_line:
+                        logging.debug(f"FFmpeg: {err_line}")
+                        error_count += 1
+
                 raw_frame = self.proc.stdout.read(frame_size)
-                if not raw_frame or len(raw_frame) != frame_size:
+                if not raw_frame:
+                    logging.warning("Nenhum dado recebido da RTSP")
+                    time.sleep(1)
                     continue
 
-                # Controle de frame skip
-                frame_counter += 1
-                if frame_counter % (self.frame_skip + 1) != 0:
+                if len(raw_frame) != frame_size:
+                    logging.warning(
+                        f"Frame incompleto: {len(raw_frame)}/{frame_size} bytes"
+                    )
                     continue
-
-                frame = np.frombuffer(raw_frame, np.uint8).reshape(
-                    (self.height, self.width, 3)
-                )
-
-                if not self.frame_queue.full():
-                    self.frame_queue.put(frame)
 
             except Exception as e:
                 logging.error(f"Erro na captura de frames RTSP: {str(e)}")
                 time.sleep(0.1)
 
     def capture_webcam_frames(self):
-        """Captura frames da webcam continuamente"""
+        """Captura frames da webcam continuamente - versão corrigida"""
         frame_counter = 0
+        consecutive_errors = 0
 
         while self.running and self.camera_initialized and self.camera_type == "webcam":
             try:
                 ret, frame = self.cap.read()
                 if not ret or frame is None:
-                    logging.warning("Erro ao capturar frame da webcam")
+                    consecutive_errors += 1
+                    logging.warning(
+                        f"Erro ao capturar frame da webcam ({consecutive_errors}/10)"
+                    )
+
+                    if consecutive_errors >= 10:
+                        logging.error(
+                            "Muitos erros consecutivos, reiniciando webcam..."
+                        )
+                        self.cleanup_webcam()
+                        time.sleep(1)
+                        self.initialize_webcam()
+                        consecutive_errors = 0
+
                     time.sleep(0.1)
                     continue
+
+                consecutive_errors = 0  # Reset error counter
 
                 # Redimensiona se necessário
                 if frame.shape[1] != self.width or frame.shape[0] != self.height:
                     frame = cv2.resize(frame, (self.width, self.height))
 
-                # Controle de frame skip e FPS
+                # Controle de FPS
                 current_time = time.time()
-                if current_time - self.last_frame_time < 1.0 / self.target_fps:
+                time_elapsed = current_time - self.last_frame_time
+                if time_elapsed < 1.0 / self.target_fps:
                     continue
 
                 self.last_frame_time = current_time
                 frame_counter += 1
 
+                # Aplica frame skip
                 if frame_counter % (self.frame_skip + 1) != 0:
                     continue
 
-                if not self.frame_queue.full():
-                    self.frame_queue.put(frame)
+                # Adiciona à fila (com timeout para evitar bloqueio)
+                try:
+                    if self.frame_queue.full():
+                        self.frame_queue.get_nowait()  # Remove frame mais antigo
+
+                    self.frame_queue.put(frame, timeout=0.1)
+                    logging.debug(
+                        f"Frame adicionado à fila. Tamanho: {self.frame_queue.qsize()}"
+                    )
+
+                except queue.Full:
+                    logging.warning("Fila de frames cheia")
+                except Exception as e:
+                    logging.error(f"Erro ao adicionar frame na fila: {str(e)}")
 
             except Exception as e:
-                logging.error(f"Erro na captura de frames webcam: {str(e)}")
+                logging.error(f"Erro crítico na captura de frames webcam: {str(e)}")
                 time.sleep(0.1)
 
     def get_frame(self):
-        """Obtém um frame da fila com timeout"""
+        """Obtém um frame da fila com fallbacks"""
         try:
-            # Timeout curto para não travar a interface
-            frame = self.frame_queue.get(timeout=0.1)
+            # Tenta obter da fila
+            frame = self.frame_queue.get(timeout=0.5)
             return frame
         except queue.Empty:
+            logging.debug("Fila vazia, tentando captura direta...")
+
+            # Se é webcam, tenta capturar diretamente
+            if self.camera_type == "webcam" and self.cap and self.cap.isOpened():
+                try:
+                    ret, frame = self.cap.read()
+                    if ret and frame is not None:
+                        # Redimensiona se necessário
+                        if (
+                            frame.shape[1] != self.width
+                            or frame.shape[0] != self.height
+                        ):
+                            frame = cv2.resize(frame, (self.width, self.height))
+                        return frame
+                except Exception as e:
+                    logging.error(f"Erro na captura direta: {str(e)}")
+
             return None
         except Exception as e:
             logging.error(f"Erro ao obter frame: {str(e)}")
@@ -265,17 +367,27 @@ class CameraManager:
         logging.info("Câmera finalizada com segurança")
 
     def cleanup_rtsp(self):
-        """Finaliza o processo FFmpeg"""
+        """Finaliza o processo FFmpeg de forma mais robusta"""
         if self.proc:
             try:
+                # Tenta terminar graciosamente
                 self.proc.terminate()
-                self.proc.wait(timeout=2)
-            except Exception as e:
-                logging.error(f"Erro ao finalizar FFmpeg: {str(e)}")
                 try:
+                    self.proc.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    # Se não responder, força o kill
                     self.proc.kill()
+                    self.proc.wait(timeout=1)
+
+                # Lê qualquer saída residual para evitar deadlocks
+                try:
+                    self.proc.stdout.read()
+                    self.proc.stderr.read()
                 except:
                     pass
+
+            except Exception as e:
+                logging.error(f"Erro ao finalizar FFmpeg: {str(e)}")
             finally:
                 self.proc = None
 

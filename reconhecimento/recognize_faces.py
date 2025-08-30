@@ -54,41 +54,60 @@ class FaceRecognizer:
         self.window_created = False
 
     def initialize_system(self):
-        """Inicialização completa do sistema"""
+        """Inicialização completa do sistema com fallback para webcam"""
         try:
-            # Inicializa câmera (tenta RTSP, depois webcam)
-            if not self.camera_manager.initialize_camera():
-                logging.error("Não foi possível inicializar nenhuma câmera")
-                return False
+            # Primeiro tenta webcam (mais confiável)
+            logging.info("Tentando conectar com webcam primeiro...")
+            if self.initialize_webcam():
+                logging.info("Webcam inicializada como fallback")
+                return True
 
-            # Log do tipo de câmera em uso
-            camera_info = self.camera_manager.get_camera_info()
-            logging.info(f"Câmera em uso: {camera_info}")
+            # Se webcam falhar, tenta RTSP
+            if self.rtsp_url:
+                logging.info("Tentando conectar com câmera RTSP...")
+                if self.initialize_rtsp():
+                    return True
 
-            # Carrega modelo
-            if not self.face_processor.load_model():
-                return False
-
-            # Conecta ao banco
-            if not self.face_processor.initialize_database():
-                logging.warning("Banco de dados não disponível, usando modo offline")
-
-            logging.info("Sistema inicializado com sucesso")
-            return True
+            logging.error("Nenhuma câmera disponível")
+            return False
 
         except Exception as e:
             logging.error(f"Falha na inicialização: {str(e)}")
-            self.cleanup()
+            return False
+
+    def initialize_webcam(self):
+        """Tenta inicializar webcam"""
+        try:
+            self.camera_manager = CameraManager(
+                None, self.width, self.height, self.target_fps  # Sem URL RTSP
+            )
+            return self.camera_manager.initialize_camera()
+        except Exception as e:
+            logging.error(f"Erro ao inicializar webcam: {str(e)}")
+            return False
+
+    def initialize_rtsp(self):
+        """Tenta inicializar RTSP"""
+        try:
+            self.camera_manager = CameraManager(
+                self.rtsp_url, self.width, self.height, self.target_fps
+            )
+            return self.camera_manager.initialize_camera()
+        except Exception as e:
+            logging.error(f"Erro ao inicializar RTSP: {str(e)}")
             return False
 
     def run(self):
-        """Loop principal de execução"""
+        """Loop principal de execução com monitoramento RTSP"""
         if not self.initialize_system():
             return
 
         camera_info = self.camera_manager.get_camera_info()
         logging.info(f"\nSistema Ativo - {camera_info}")
         logging.info("Pressione 'q' para sair")
+        logging.info("Pressione 'r' para reconectar RTSP")
+        logging.info("Pressione '+' para reduzir frame skip")
+        logging.info("Pressione '-' para aumentar frame skip")
 
         # Cria a janela apenas uma vez
         if not self.window_created:
@@ -97,6 +116,7 @@ class FaceRecognizer:
             self.window_created = True
 
         last_time = time.time()
+        last_rtsp_check = time.time()  # Para monitoramento RTSP
         frames_processed = 0
         self.running = True
 
@@ -114,6 +134,26 @@ class FaceRecognizer:
 
         while self.running:
             try:
+                # Verifica se a câmera RTSP ainda está funcionando
+                current_time = time.time()
+                if (
+                    self.camera_manager.camera_type == "rtsp"
+                    and current_time - last_rtsp_check > 10
+                ):  # Verifica a cada 10 segundos
+                    last_rtsp_check = current_time
+
+                    # Verifica se há frames na fila
+                    frames_count = self.camera_manager.frame_queue.qsize()
+                    logging.debug(f"Monitor RTSP - Frames na fila: {frames_count}")
+
+                    if frames_count == 0:
+                        logging.warning(
+                            "RTSP parece estar inativa, tentando reconectar..."
+                        )
+                        self.reconnect_camera()
+                        # Atualiza a informação da câmera após reconexão
+                        camera_info = self.camera_manager.get_camera_info()
+
                 # Obtém frame da câmera
                 frame = self.camera_manager.get_frame()
                 display_frame = default_frame.copy()
@@ -136,6 +176,19 @@ class FaceRecognizer:
                             2,
                         )
 
+                        # Adiciona informação de frames na fila (apenas para debug)
+                        if logging.getLogger().getEffectiveLevel() == logging.DEBUG:
+                            queue_size = self.camera_manager.frame_queue.qsize()
+                            cv2.putText(
+                                display_frame,
+                                f"Fila: {queue_size} frames",
+                                (10, 60),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.5,
+                                (255, 255, 255),
+                                1,
+                            )
+
                         frames_processed += 1
 
                 # Exibe o frame
@@ -156,6 +209,9 @@ class FaceRecognizer:
                 elif key == ord("r"):  # Tecla 'r' para tentar reconectar RTSP
                     logging.info("Tentando reconectar câmera RTSP...")
                     self.reconnect_camera()
+                    # Atualiza a informação da câmera após reconexão
+                    camera_info = self.camera_manager.get_camera_info()
+                    last_rtsp_check = time.time()  # Reseta o timer de verificação
                 elif key == ord("+"):
                     self.camera_manager.frame_skip = max(
                         0, self.camera_manager.frame_skip - 1
@@ -168,6 +224,14 @@ class FaceRecognizer:
                     logging.info(
                         f"Frame skip aumentado para {self.camera_manager.frame_skip}"
                     )
+                elif key == ord("d"):  # Tecla 'd' para toggle debug mode
+                    current_level = logging.getLogger().getEffectiveLevel()
+                    if current_level == logging.INFO:
+                        logging.getLogger().setLevel(logging.DEBUG)
+                        logging.info("Modo debug ativado")
+                    else:
+                        logging.getLogger().setLevel(logging.INFO)
+                        logging.info("Modo debug desativado")
 
             except Exception as e:
                 logging.error(f"Erro no loop principal: {str(e)}")
