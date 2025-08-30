@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sistema de Cadastro</title>
+    <title>Sistema de Cadastro e Reconhecimento Facial</title>
     <!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <!-- Font Awesome -->
@@ -18,8 +18,11 @@
     <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
         <div class="container">
             <a class="navbar-brand" href="#">
-                <i class="fas fa-user-plus me-2"></i>Sistema de Cadastro
+                <i class="fas fa-user-plus me-2"></i>Sistema de Cadastro e Reconhecimento
             </a>
+            <span class="navbar-text">
+                Status: <span id="statusIndicator" class="status-indicator" title="Sistema inativo"></span>
+            </span>
         </div>
     </nav>
 
@@ -42,12 +45,19 @@
                             <a href="#" class="btn btn-info menu-btn">
                                 <i class="fas fa-info-circle"></i> Informações
                             </a>
-                            <!-- Novos botões -->
+
+                            <!-- Botões de IA e Câmeras -->
+                            <button id="btnConfigurarAmbiente" class="btn btn-outline-primary menu-btn">
+                                <i class="fas fa-cogs"></i> Configurar Ambiente
+                            </button>
                             <button id="btnTreinamentoIA" class="btn btn-success menu-btn">
                                 <i class="fas fa-robot"></i> Treinamento IA
                             </button>
                             <button id="btnIniciarCameras" class="btn btn-warning menu-btn">
                                 <i class="fas fa-camera"></i> Iniciar Câmeras
+                            </button>
+                            <button id="btnPararCameras" class="btn btn-secondary menu-btn" disabled>
+                                <i class="fas fa-stop"></i> Parar Câmeras
                             </button>
                         </div>
                     </div>
@@ -56,9 +66,9 @@
         </div>
     </div>
 
-    <!-- Modal para feedback do treinamento -->
+    <!-- Modal para feedback do processamento -->
     <div class="modal fade" id="modalFeedback" tabindex="-1" aria-labelledby="modalFeedbackLabel" aria-hidden="true">
-        <div class="modal-dialog">
+        <div class="modal-dialog modal-lg">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title" id="modalFeedbackLabel">Processamento em Andamento</h5>
@@ -69,12 +79,17 @@
                         <div id="progressBar" class="progress-bar" role="progressbar" style="width: 0%"
                             aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
                     </div>
-                    <div id="feedbackMessage" class="text-center">
+                    <div id="feedbackMessage" class="text-center mb-3">
                         Iniciando processo...
                     </div>
-                    <div id="consoleOutput" class="mt-3 p-2 bg-dark text-light rounded"
-                        style="height: 150px; overflow-y: auto; font-family: monospace; font-size: 12px;">
-                        <!-- Saída do console será exibida aqui -->
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h6>Console de Saída:</h6>
+                        <button id="btnLimparConsole" class="btn btn-sm btn-outline-secondary">
+                            <i class="fas fa-trash"></i> Limpar
+                        </button>
+                    </div>
+                    <div id="consoleOutput" class="console-output">
+                        > Sistema pronto para executar comandos...
                     </div>
                 </div>
                 <div class="modal-footer">

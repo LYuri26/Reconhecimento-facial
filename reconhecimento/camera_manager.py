@@ -21,6 +21,7 @@ class CameraManager:
         self.proc = None
         self.cap = None
         self.camera_type = None  # 'rtsp' ou 'webcam'
+        self.last_frame_time = 0
 
     def initialize_camera(self):
         """Inicialização da câmera - tenta RTSP primeiro, depois webcam"""
@@ -29,17 +30,17 @@ class CameraManager:
             if self.rtsp_url:
                 logging.info(f"Tentando conectar com câmera RTSP: {self.rtsp_url}")
                 if self.initialize_rtsp():
-                    self.camera_type = 'rtsp'
+                    self.camera_type = "rtsp"
                     logging.info("Câmera RTSP inicializada com sucesso")
                     return True
-            
+
             # Se RTSP falhar, tenta webcam
             logging.info("Tentando conectar com webcam...")
             if self.initialize_webcam():
-                self.camera_type = 'webcam'
+                self.camera_type = "webcam"
                 logging.info("Webcam inicializada com sucesso")
                 return True
-            
+
             logging.error("Nenhuma câmera disponível")
             return False
 
@@ -99,28 +100,37 @@ class CameraManager:
             # Tenta diferentes índices de câmera (0, 1, 2)
             for camera_index in [0, 1, 2]:
                 try:
-                    self.cap = cv2.VideoCapture(camera_index)
+                    self.cap = cv2.VideoCapture(camera_index, cv2.CAP_ANY)
                     if self.cap.isOpened():
                         # Configura a webcam
                         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
                         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
                         self.cap.set(cv2.CAP_PROP_FPS, self.target_fps)
-                        
+                        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduzir buffer
+
                         # Testa se consegue ler um frame
                         ret, frame = self.cap.read()
                         if ret and frame is not None:
                             self.camera_initialized = True
                             self.running = True
-                            threading.Thread(target=self.capture_webcam_frames, daemon=True).start()
+                            # Inicia a captura em thread separada
+                            self.capture_thread = threading.Thread(
+                                target=self.capture_webcam_frames, daemon=True
+                            )
+                            self.capture_thread.start()
                             logging.info(f"Webcam encontrada no índice {camera_index}")
                             return True
                         else:
                             self.cap.release()
+                            self.cap = None
                 except Exception as e:
-                    logging.warning(f"Erro ao acessar webcam índice {camera_index}: {str(e)}")
+                    logging.warning(
+                        f"Erro ao acessar webcam índice {camera_index}: {str(e)}"
+                    )
                     if self.cap:
                         self.cap.release()
-            
+                        self.cap = None
+
             logging.error("Nenhuma webcam encontrada")
             return False
 
@@ -128,6 +138,7 @@ class CameraManager:
             logging.error(f"Erro na inicialização da webcam: {str(e)}")
             if self.cap:
                 self.cap.release()
+                self.cap = None
             return False
 
     def test_rtsp_connection(self, timeout=5):
@@ -160,7 +171,7 @@ class CameraManager:
         frame_size = self.width * self.height * 3
         frame_counter = 0
 
-        while self.running and self.camera_initialized and self.camera_type == 'rtsp':
+        while self.running and self.camera_initialized and self.camera_type == "rtsp":
             try:
                 raw_frame = self.proc.stdout.read(frame_size)
                 if not raw_frame or len(raw_frame) != frame_size:
@@ -186,7 +197,7 @@ class CameraManager:
         """Captura frames da webcam continuamente"""
         frame_counter = 0
 
-        while self.running and self.camera_initialized and self.camera_type == 'webcam':
+        while self.running and self.camera_initialized and self.camera_type == "webcam":
             try:
                 ret, frame = self.cap.read()
                 if not ret or frame is None:
@@ -198,8 +209,14 @@ class CameraManager:
                 if frame.shape[1] != self.width or frame.shape[0] != self.height:
                     frame = cv2.resize(frame, (self.width, self.height))
 
-                # Controle de frame skip
+                # Controle de frame skip e FPS
+                current_time = time.time()
+                if current_time - self.last_frame_time < 1.0 / self.target_fps:
+                    continue
+
+                self.last_frame_time = current_time
                 frame_counter += 1
+
                 if frame_counter % (self.frame_skip + 1) != 0:
                     continue
 
@@ -211,10 +228,12 @@ class CameraManager:
                 time.sleep(0.1)
 
     def get_frame(self):
-        """Obtém um frame da fila"""
+        """Obtém um frame da fila com timeout"""
         try:
-            if not self.frame_queue.empty():
-                return self.frame_queue.get()
+            # Timeout curto para não travar a interface
+            frame = self.frame_queue.get(timeout=0.1)
+            return frame
+        except queue.Empty:
             return None
         except Exception as e:
             logging.error(f"Erro ao obter frame: {str(e)}")
@@ -222,9 +241,9 @@ class CameraManager:
 
     def get_camera_info(self):
         """Retorna informações da câmera em uso"""
-        if self.camera_type == 'rtsp':
+        if self.camera_type == "rtsp":
             return f"RTSP: {self.rtsp_url}"
-        elif self.camera_type == 'webcam':
+        elif self.camera_type == "webcam":
             return "Webcam local"
         else:
             return "Nenhuma câmera"
@@ -239,6 +258,9 @@ class CameraManager:
 
         # Limpa webcam
         self.cleanup_webcam()
+
+        # Limpa a fila de frames
+        self.clear_frame_queue()
 
         logging.info("Câmera finalizada com segurança")
 
@@ -258,11 +280,31 @@ class CameraManager:
                 self.proc = None
 
     def cleanup_webcam(self):
-        """Libera a webcam"""
+        """Libera a webcam completamente"""
         if self.cap:
             try:
+                # Para a captura primeiro
+                self.running = False
+
+                # Espera a thread terminar
+                if hasattr(self, "capture_thread") and self.capture_thread.is_alive():
+                    self.capture_thread.join(timeout=2.0)
+
+                # Libera a câmera
                 self.cap.release()
+
             except Exception as e:
                 logging.error(f"Erro ao liberar webcam: {str(e)}")
             finally:
                 self.cap = None
+
+    def clear_frame_queue(self):
+        """Limpa a fila de frames"""
+        try:
+            while not self.frame_queue.empty():
+                try:
+                    self.frame_queue.get_nowait()
+                except queue.Empty:
+                    break
+        except Exception as e:
+            logging.error(f"Erro ao limpar fila de frames: {str(e)}")

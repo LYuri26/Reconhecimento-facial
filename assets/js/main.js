@@ -1,55 +1,82 @@
 // assets/js/main.js
 
 document.addEventListener("DOMContentLoaded", function () {
+  // Verificar se os botões existem antes de adicionar event listeners
+  const btnConfigurarAmbiente = document.getElementById(
+    "btnConfigurarAmbiente"
+  );
+  const btnTreinamentoIA = document.getElementById("btnTreinamentoIA");
+  const btnIniciarCameras = document.getElementById("btnIniciarCameras");
+  const btnPararCameras = document.getElementById("btnPararCameras");
+  const btnLimparConsole = document.getElementById("btnLimparConsole");
+
   // Botão de Configurar Ambiente
-  document
-    .getElementById("btnConfigurarAmbiente")
-    .addEventListener("click", function () {
+  if (btnConfigurarAmbiente) {
+    btnConfigurarAmbiente.addEventListener("click", function () {
       executarScriptPython("setup_ambiente");
     });
+  }
 
   // Botão de Treinamento IA
-  document
-    .getElementById("btnTreinamentoIA")
-    .addEventListener("click", function () {
+  if (btnTreinamentoIA) {
+    btnTreinamentoIA.addEventListener("click", function () {
       executarScriptPython("treinamento_ia");
     });
+  }
 
   // Botão de Iniciar Câmeras
-  document
-    .getElementById("btnIniciarCameras")
-    .addEventListener("click", function () {
+  if (btnIniciarCameras) {
+    btnIniciarCameras.addEventListener("click", function () {
       executarScriptPython("iniciar_cameras");
     });
+  }
 
   // Botão de Parar Câmeras
-  document
-    .getElementById("btnPararCameras")
-    .addEventListener("click", function () {
+  if (btnPararCameras) {
+    btnPararCameras.addEventListener("click", function () {
       pararCameras();
     });
+  }
 
   // Botão de Limpar Console
-  document
-    .getElementById("btnLimparConsole")
-    .addEventListener("click", function () {
-      document.getElementById("consoleOutput").innerHTML = "";
+  if (btnLimparConsole) {
+    btnLimparConsole.addEventListener("click", function () {
+      const consoleOutput = document.getElementById("consoleOutput");
+      if (consoleOutput) {
+        consoleOutput.innerHTML = "> Console limpo...\n";
+      }
     });
+  }
 
-  // Inicializar estado dos botões
-  atualizarEstadoBotoes(false);
+  // Inicializar estado dos botões - COMEÇAM HABILITADOS
+  atualizarEstadoBotoes(true);
 });
 
 // Variável global para controlar o estado das câmeras
 let camerasAtivas = false;
 let intervaloMonitoramento = null;
+let eventSource = null;
 
 function executarScriptPython(acao) {
   // Mostrar o modal de feedback
-  const modal = new bootstrap.Modal(document.getElementById("modalFeedback"));
+  const modalElement = document.getElementById("modalFeedback");
+  if (!modalElement) {
+    console.error("Modal de feedback não encontrado");
+    mostrarNotificacao("error", "Elemento modal não encontrado");
+    return;
+  }
+
+  const modal = new bootstrap.Modal(modalElement);
   const progressBar = document.getElementById("progressBar");
   const feedbackMessage = document.getElementById("feedbackMessage");
   const consoleOutput = document.getElementById("consoleOutput");
+
+  // Verificar se elementos existem
+  if (!progressBar || !feedbackMessage || !consoleOutput) {
+    console.error("Elementos do modal não encontrados");
+    mostrarNotificacao("error", "Elementos do modal não configurados");
+    return;
+  }
 
   // Resetar o modal
   progressBar.style.width = "0%";
@@ -67,78 +94,115 @@ function executarScriptPython(acao) {
   // Desabilitar botões durante a execução
   atualizarEstadoBotoes(false);
 
-  // Fazer requisição para o PHP
-  fetch("./src/controller/main.php", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      acao: acao,
-    }),
-  })
-    .then((response) => {
-      if (!response.ok) {
-        throw new Error("Erro na resposta do servidor: " + response.status);
+  // Usar Server-Sent Events para tempo real
+  iniciarConexaoTempoReal(
+    acao,
+    progressBar,
+    feedbackMessage,
+    consoleOutput,
+    modal
+  );
+}
+
+function iniciarConexaoTempoReal(
+  acao,
+  progressBar,
+  feedbackMessage,
+  consoleOutput,
+  modal
+) {
+  // Fechar conexão anterior se existir
+  if (eventSource) {
+    eventSource.close();
+  }
+
+  // URL correta para o PHP - usando POST em vez de GET
+  const url = "./src/controller/main.php";
+
+  // Criar nova conexão SSE usando POST
+  eventSource = new EventSource(`${url}?acao=${acao}&real_time=1`);
+
+  eventSource.onmessage = function (event) {
+    try {
+      const data = JSON.parse(event.data);
+
+      if (data.output) {
+        // Adicionar saída ao console
+        consoleOutput.innerHTML += data.output;
+        consoleOutput.scrollTop = consoleOutput.scrollHeight;
+
+        // Atualizar progresso baseado na saída
+        if (data.output.includes("✓")) {
+          const currentProgress = parseInt(
+            progressBar.getAttribute("aria-valuenow")
+          );
+          atualizarProgresso(Math.min(currentProgress + 20, 100), data.output);
+        }
+
+        // Verificar se é mensagem de conclusão
+        if (
+          data.output.includes("concluído") ||
+          data.output.includes("sucesso")
+        ) {
+          atualizarProgresso(100, "Processamento concluído com sucesso!");
+        }
       }
-      return response.json();
-    })
-    .then((data) => {
-      console.log("Resposta recebida:", data);
 
-      if (data.success) {
-        // Atualizar progresso
-        atualizarProgresso(100, "Processamento concluído com sucesso!");
-
-        // Exibir saída no console
-        if (data.output) {
-          consoleOutput.innerHTML += formatarOutput(data.output) + "\n";
-        }
-
-        // Executar ação específica após conclusão
-        if (acao === "setup_ambiente") {
-          consoleOutput.innerHTML +=
-            "> Ambiente configurado com sucesso! Sistema pronto para uso.\n";
-          mostrarNotificacao("success", "Ambiente configurado com sucesso!");
-        } else if (acao === "treinamento_ia") {
-          consoleOutput.innerHTML +=
-            "> Treinamento de IA concluído. Modelo pronto para uso.\n";
-          mostrarNotificacao("success", "Treinamento concluído com sucesso!");
-        } else if (acao === "iniciar_cameras") {
-          consoleOutput.innerHTML +=
-            "> Sistema de reconhecimento facial inicializado.\n";
-          consoleOutput.innerHTML += "> Verificando câmeras disponíveis...\n";
-          mostrarNotificacao("success", "Sistema de câmeras iniciado!");
-
-          // Atualizar estado das câmeras
-          camerasAtivas = true;
-          atualizarEstadoBotoes(true);
-
-          // Iniciar monitoramento
-          iniciarMonitoramentoCameras();
-        }
-      } else {
-        atualizarProgresso(0, "Erro no processamento");
-        consoleOutput.innerHTML += "> ERRO: " + data.error + "\n";
-        if (data.output) {
-          consoleOutput.innerHTML +=
-            "> Detalhes: " + formatarOutput(data.output) + "\n";
-        }
-        mostrarNotificacao("error", "Erro: " + data.error);
-
-        // Re-habilitar botões em caso de erro
-        atualizarEstadoBotoes(true);
+      if (data.finished) {
+        // Processo finalizado
+        finalizarProcesso(acao, consoleOutput, modal);
       }
-    })
-    .catch((error) => {
-      console.error("Erro na requisição:", error);
-      atualizarProgresso(0, "Erro na comunicação com o servidor");
-      consoleOutput.innerHTML += "> ERRO: " + error.message + "\n";
-      mostrarNotificacao("error", "Erro de comunicação: " + error.message);
+    } catch (e) {
+      console.error("Erro ao processar evento:", e);
+    }
+  };
 
-      // Re-habilitar botões em caso de erro
-      atualizarEstadoBotoes(true);
-    });
+  eventSource.onerror = function (error) {
+    console.error("Erro na conexão SSE:", error);
+    atualizarProgresso(0, "Erro na comunicação");
+    consoleOutput.innerHTML += "> ERRO: Conexão perdida com o servidor\n";
+    mostrarNotificacao("error", "Erro de comunicação com o servidor");
+
+    // Re-habilitar botões
+    atualizarEstadoBotoes(true);
+
+    // Fechar conexão
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+  };
+}
+
+function finalizarProcesso(acao, consoleOutput, modal) {
+  // Fechar conexão SSE
+  if (eventSource) {
+    eventSource.close();
+    eventSource = null;
+  }
+
+  // Executar ação específica após conclusão
+  if (acao === "setup_ambiente") {
+    consoleOutput.innerHTML +=
+      "> Ambiente configurado com sucesso! Sistema pronto para uso.\n";
+    mostrarNotificacao("success", "Ambiente configurado com sucesso!");
+  } else if (acao === "treinamento_ia") {
+    consoleOutput.innerHTML +=
+      "> Treinamento de IA concluído. Modelo pronto para uso.\n";
+    mostrarNotificacao("success", "Treinamento concluído com sucesso!");
+  } else if (acao === "iniciar_cameras") {
+    consoleOutput.innerHTML +=
+      "> Sistema de reconhecimento facial inicializado.\n";
+    consoleOutput.innerHTML += "> Verificando câmeras disponíveis...\n";
+    mostrarNotificacao("success", "Sistema de câmeras iniciado!");
+
+    // Atualizar estado das câmeras
+    camerasAtivas = true;
+    atualizarEstadoBotoes(true);
+  }
+
+  // Re-habilitar botões
+  atualizarEstadoBotoes(true);
 }
 
 function formatarOutput(output) {
@@ -148,6 +212,8 @@ function formatarOutput(output) {
 function atualizarProgresso(percentual, mensagem) {
   const progressBar = document.getElementById("progressBar");
   const feedbackMessage = document.getElementById("feedbackMessage");
+
+  if (!progressBar || !feedbackMessage) return;
 
   progressBar.style.width = percentual + "%";
   progressBar.textContent = percentual + "%";
@@ -204,9 +270,11 @@ function atualizarEstadoBotoes(habilitado) {
 
 function pararCameras() {
   if (camerasAtivas) {
-    // Simular parada das câmeras (em produção, você teria uma API para parar o processo)
+    // Simular parada das câmeras
     const consoleOutput = document.getElementById("consoleOutput");
-    consoleOutput.innerHTML += "> Parando sistema de câmeras...\n";
+    if (consoleOutput) {
+      consoleOutput.innerHTML += "> Parando sistema de câmeras...\n";
+    }
 
     // Parar monitoramento
     pararMonitoramentoCameras();
@@ -215,7 +283,9 @@ function pararCameras() {
     camerasAtivas = false;
     atualizarEstadoBotoes(true);
 
-    consoleOutput.innerHTML += "> Sistema de câmeras parado com sucesso.\n";
+    if (consoleOutput) {
+      consoleOutput.innerHTML += "> Sistema de câmeras parado com sucesso.\n";
+    }
     mostrarNotificacao("info", "Sistema de câmeras parado");
   }
 }
@@ -233,7 +303,7 @@ function iniciarMonitoramentoCameras() {
       const timestamp = new Date().toLocaleTimeString();
 
       // Simular logs de monitoramento
-      if (Math.random() > 0.7) {
+      if (Math.random() > 0.7 && consoleOutput) {
         consoleOutput.innerHTML += `> [${timestamp}] Sistema ativo - Processando frames...\n`;
 
         // Manter o console rolável para baixo
@@ -330,7 +400,7 @@ const styles = `
 .console-output {
   font-family: 'Courier New', monospace;
   font-size: 12px;
-  height: 300px;
+  height: 150px;
   overflow-y: auto;
   background-color: #1a1a1a;
   color: #00ff00;

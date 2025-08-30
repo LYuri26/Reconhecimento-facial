@@ -1,10 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-"""
-Script para criar ambiente virtual, instalar dependências e executar ações.
-"""
-
 import os
 import sys
 import subprocess
@@ -62,6 +55,7 @@ class VenvSetup:
 
         try:
             print("Instalando dependências do requirements.txt...")
+            print("Isso pode levar alguns minutos...")
 
             # Comando para instalar requirements
             if sys.platform == "win32":
@@ -69,16 +63,27 @@ class VenvSetup:
             else:
                 cmd = f'"{python_path}" -m pip install -r "{requirements_path}"'
 
-            result = subprocess.run(
-                cmd, shell=True, capture_output=True, text=True, timeout=600
+            # Executar com saída em tempo real
+            process = subprocess.Popen(
+                cmd,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
             )
 
-            if result.returncode == 0:
+            # Ler saída em tempo real
+            for line in process.stdout:
+                print(line.strip())
+                sys.stdout.flush()  # Forçar flush para saída imediata
+
+            process.wait()
+
+            if process.returncode == 0:
                 print("✓ Todas as dependências instaladas com sucesso")
                 return True
             else:
-                print("✗ Erro ao instalar requirements:")
-                print(result.stderr)
+                print("✗ Erro ao instalar requirements")
                 return False
 
         except subprocess.TimeoutExpired:
@@ -91,15 +96,18 @@ class VenvSetup:
     def setup_environment(self):
         """Configura o ambiente completo"""
         print("Iniciando configuração do ambiente...")
+        print("=" * 50)
 
         # Criar venv
         if not self.create_venv():
             return False
 
         # Instalar requirements
+        print("=" * 50)
         if not self.install_requirements():
             return False
 
+        print("=" * 50)
         print("✓ Configuração concluída com sucesso!")
         return True
 
@@ -115,17 +123,42 @@ def executar_treinamento():
 def executar_reconhecimento():
     """Função para iniciar reconhecimento facial"""
     print("Iniciando reconhecimento facial...")
-    
+
     try:
-        # Importa e executa o reconhecimento
+        # Primeiro, verificar se estamos no ambiente virtual
         from reconhecimento.recognize_faces import FaceRecognizer
-        
+
         recognizer = FaceRecognizer()
         recognizer.run()
-        
+
         print("✓ Reconhecimento facial finalizado")
         return True
-        
+
+    except ImportError as e:
+        print(f"✗ Erro ao importar módulos: {e}")
+        print("Verifique se todas as dependências estão instaladas")
+
+        # Tentar uma solução alternativa: executar via subprocess usando o Python do venv
+        try:
+            setup = VenvSetup()
+            python_path, _ = setup.get_venv_python()
+
+            if python_path.exists():
+                print("Tentando executar com Python do venv...")
+                script_path = Path(__file__).resolve()
+                cmd = f'"{python_path}" "{script_path}" --reconhecimento'
+
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                if result.returncode == 0:
+                    print("✓ Reconhecimento executado com sucesso via subprocess")
+                    return True
+                else:
+                    print(f"✗ Erro no subprocess: {result.stderr}")
+
+        except Exception as sub_e:
+            print(f"✗ Falha na execução alternativa: {sub_e}")
+
+        return False
     except Exception as e:
         print(f"✗ Erro ao executar reconhecimento: {e}")
         return False
@@ -137,8 +170,14 @@ def main():
     parser.add_argument(
         "--treinamento", action="store_true", help="Executar treinamento da IA"
     )
-    parser.add_argument("--reconhecimento", action="store_true", help="Iniciar reconhecimento facial")
-    parser.add_argument("--cameras", action="store_true", help="Iniciar câmeras (alias para reconhecimento)")
+    parser.add_argument(
+        "--reconhecimento", action="store_true", help="Iniciar reconhecimento facial"
+    )
+    parser.add_argument(
+        "--cameras",
+        action="store_true",
+        help="Iniciar câmeras (alias para reconhecimento)",
+    )
 
     args = parser.parse_args()
 
@@ -159,6 +198,9 @@ def main():
             print("✓ Ambiente configurado com sucesso!")
             return 0
 
+    except KeyboardInterrupt:
+        print("\n✗ Processo interrompido pelo usuário")
+        return 1
     except Exception as e:
         print(f"✗ Erro não tratado: {e}")
         return 1

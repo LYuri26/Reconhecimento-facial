@@ -2,20 +2,35 @@ import cv2
 import time
 import logging
 import os
-from .camera_manager import CameraManager
-from .face_processor import FaceProcessor
+import sys
+import numpy as np  # <-- adicionei aqui
+from pathlib import Path
+
+# Adiciona o diretório atual ao path para importações relativas
+sys.path.insert(0, str(Path(__file__).parent))
+
+from camera_manager import CameraManager
+from face_processor import FaceProcessor
 
 # Configurações para evitar travamentos
 os.environ["QT_QPA_PLATFORM"] = "xcb"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 os.environ["OPENCV_VIDEOIO_DEBUG"] = "0"
+os.environ["OPENCV_LOG_LEVEL"] = "ERROR"
 
 # Configuração de logging
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[logging.FileHandler("face_recognition.log"), logging.StreamHandler()],
 )
+
+# Reduzir logs do OpenCV
+try:
+    cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
+except AttributeError:
+    if hasattr(cv2, "setLogLevel") and hasattr(cv2, "LOG_LEVEL_ERROR"):
+        cv2.setLogLevel(cv2.LOG_LEVEL_ERROR)
 
 
 class FaceRecognizer:
@@ -36,6 +51,7 @@ class FaceRecognizer:
 
         # Controles do sistema
         self.running = False
+        self.window_created = False
 
     def initialize_system(self):
         """Inicialização completa do sistema"""
@@ -73,31 +89,57 @@ class FaceRecognizer:
         camera_info = self.camera_manager.get_camera_info()
         logging.info(f"\nSistema Ativo - {camera_info}")
         logging.info("Pressione 'q' para sair")
-        
-        cv2.namedWindow("Reconhecimento Facial", cv2.WINDOW_NORMAL)
-        cv2.resizeWindow("Reconhecimento Facial", self.width, self.height)
+
+        # Cria a janela apenas uma vez
+        if not self.window_created:
+            cv2.namedWindow("Reconhecimento Facial", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("Reconhecimento Facial", self.width, self.height)
+            self.window_created = True
 
         last_time = time.time()
         frames_processed = 0
         self.running = True
 
+        # Frame padrão para exibir quando não há frames da câmera
+        default_frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+        cv2.putText(
+            default_frame,
+            "Aguardando frames da camera...",
+            (50, self.height // 2),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (255, 255, 255),
+            2,
+        )
+
         while self.running:
             try:
                 # Obtém frame da câmera
                 frame = self.camera_manager.get_frame()
+                display_frame = default_frame.copy()
+
                 if frame is not None:
                     # Processa o frame
                     processed_frame = self.face_processor.process_frame(frame)
 
                     if processed_frame is not None:
+                        display_frame = processed_frame
                         # Adiciona informação da câmera no frame
                         camera_type = "RTSP" if "RTSP" in camera_info else "WEBCAM"
-                        cv2.putText(processed_frame, f"Camera: {camera_type}", 
-                                   (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
-                                   0.7, (255, 255, 255), 2)
-                        
-                        cv2.imshow("Reconhecimento Facial", processed_frame)
+                        cv2.putText(
+                            display_frame,
+                            f"Camera: {camera_type}",
+                            (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7,
+                            (255, 255, 255),
+                            2,
+                        )
+
                         frames_processed += 1
+
+                # Exibe o frame
+                cv2.imshow("Reconhecimento Facial", display_frame)
 
                 # Cálculo de FPS
                 current_time = time.time()
@@ -138,18 +180,18 @@ class FaceRecognizer:
         try:
             self.cleanup()
             time.sleep(1)
-            
+
             # Recria os objetos
             self.camera_manager = CameraManager(
                 self.rtsp_url, self.width, self.height, self.target_fps
             )
             self.face_processor = FaceProcessor()
-            
+
             if self.initialize_system():
                 logging.info("Reconexão bem-sucedida!")
             else:
                 logging.warning("Falha na reconexão, usando webcam")
-                
+
         except Exception as e:
             logging.error(f"Erro na reconexão: {str(e)}")
 
@@ -165,7 +207,9 @@ class FaceRecognizer:
 
         # Fecha janelas OpenCV
         try:
-            cv2.destroyAllWindows()
+            if self.window_created:
+                cv2.destroyAllWindows()
+                self.window_created = False
         except Exception as e:
             logging.error(f"Erro ao fechar janelas: {str(e)}")
 

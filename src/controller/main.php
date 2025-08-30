@@ -10,10 +10,35 @@ header('Access-Control-Allow-Headers: Content-Type');
 $response = [
     'success' => false,
     'error' => '',
-    'output' => ''
+    'output' => '',
+    'real_time' => false
 ];
 
-// Verificar se a requisição é POST
+// Verificar se é uma requisição GET para tempo real
+if ($_SERVER['REQUEST_METHOD'] == 'GET' && isset($_GET['real_time']) && $_GET['real_time'] == '1') {
+    $acao = $_GET['acao'] ?? '';
+
+    if (!empty($acao)) {
+        // Determinar o caminho base do projeto
+        $projectRoot = realpath(dirname(__FILE__) . '/../..');
+        $scriptPath = $projectRoot . '/main.py';
+
+        // Tentar encontrar o Python disponível
+        $pythonCommand = encontrarPython();
+
+        if ($pythonCommand && file_exists($scriptPath)) {
+            executarComandoTempoReal($pythonCommand, $scriptPath, $acao, $projectRoot);
+            exit;
+        }
+    }
+
+    // Se chegou aqui, houve erro
+    header('Content-Type: text/event-stream');
+    echo "data: " . json_encode(['error' => 'Parâmetros inválidos']) . "\n\n";
+    exit;
+}
+
+// Verificar se a requisição é POST (para o método original)
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     // Ler os dados JSON da requisição
     $input = json_decode(file_get_contents('php://input'), true);
@@ -85,7 +110,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             if ($acao === 'treinamento_ia') {
                 $arg = '--treinamento';
             } elseif ($acao === 'iniciar_cameras') {
-                $arg = '--reconhecimento';  // Mudado para --reconhecimento
+                $arg = '--reconhecimento';
             } else {
                 $response['error'] = 'Ação não reconhecida: ' . $acao;
                 echo json_encode($response);
@@ -128,13 +153,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 error_log("Comando falhou: " . $comando);
                 error_log("Código de retorno: " . $return_var);
                 error_log("Saída: " . $outputStr);
-
-                // Mensagens de erro mais amigáveis
-                if (strpos($outputStr, "No such file or directory") !== false) {
-                    $response['error'] = 'Arquivo ou diretório não encontrado. Verifique as permissões.';
-                } elseif (strpos($outputStr, "Permission denied") !== false) {
-                    $response['error'] = 'Permissão negada. Execute: chmod +x ' . $scriptPath;
-                }
             }
         } catch (Exception $e) {
             $response['error'] = 'Exceção: ' . $e->getMessage();
@@ -148,6 +166,82 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 // Retornar a resposta como JSON
 echo json_encode($response);
+
+function executarComandoTempoReal($pythonCommand, $scriptPath, $acao, $projectRoot)
+{
+    // Primeiro, tentar encontrar o Python do venv
+    $venvPythonPath = encontrarPythonVenv($projectRoot);
+    if ($venvPythonPath) {
+        $pythonCommand = $venvPythonPath;
+    }
+
+    // Resto do código permanece igual...
+    $descriptorspec = array(
+        0 => array("pipe", "r"),  // stdin
+        1 => array("pipe", "w"),  // stdout
+        2 => array("pipe", "w")   // stderr
+    );
+
+    // Definir o comando baseado na ação
+    $arg = '';
+    if ($acao === 'treinamento_ia') {
+        $arg = '--treinamento';
+    } elseif ($acao === 'iniciar_cameras') {
+        $arg = '--reconhecimento';
+    } elseif ($acao === 'setup_ambiente') {
+        $arg = '';
+    }
+
+    $comando = escapeshellarg($pythonCommand) . ' ' . escapeshellarg($scriptPath);
+    if (!empty($arg)) {
+        $comando .= ' ' . $arg;
+    }
+    $comando .= ' 2>&1';
+
+    $process = proc_open($comando, $descriptorspec, $pipes, $projectRoot);
+
+    if (is_resource($process)) {
+        // Fechar stdin já que não vamos usar
+        fclose($pipes[0]);
+
+        // Configurar headers para streaming
+        header('Content-Type: text/event-stream');
+        header('Cache-Control: no-cache');
+        header('X-Accel-Buffering: no'); // Desabilitar buffering do Nginx
+        header('Access-Control-Allow-Origin: *');
+        header('Access-Control-Allow-Methods: GET');
+
+        // Ler a saída em tempo real
+        while (!feof($pipes[1])) {
+            $output = fgets($pipes[1]);
+            if ($output !== false) {
+                // Enviar como evento SSE
+                echo "data: " . json_encode(['output' => $output]) . "\n\n";
+                ob_flush();
+                flush();
+
+                // Pequena pausa para não sobrecarregar
+                usleep(10000); // 10ms
+            }
+        }
+
+        // Fechar pipes e processo
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        $returnCode = proc_close($process);
+
+        // Enviar evento de finalização
+        echo "data: " . json_encode(['finished' => true, 'return_code' => $returnCode]) . "\n\n";
+        ob_flush();
+        flush();
+    } else {
+        // Erro ao abrir processo
+        header('Content-Type: text/event-stream');
+        echo "data: " . json_encode(['error' => 'Erro ao iniciar processo']) . "\n\n";
+        ob_flush();
+        flush();
+    }
+}
 
 function encontrarPython()
 {
