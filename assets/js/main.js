@@ -2,20 +2,9 @@
 
 document.addEventListener("DOMContentLoaded", function () {
   // Verificar se os botões existem antes de adicionar event listeners
-  const btnConfigurarAmbiente = document.getElementById(
-    "btnConfigurarAmbiente"
-  );
   const btnTreinamentoIA = document.getElementById("btnTreinamentoIA");
   const btnIniciarCameras = document.getElementById("btnIniciarCameras");
-  const btnPararCameras = document.getElementById("btnPararCameras");
   const btnLimparConsole = document.getElementById("btnLimparConsole");
-
-  // Botão de Configurar Ambiente
-  if (btnConfigurarAmbiente) {
-    btnConfigurarAmbiente.addEventListener("click", function () {
-      executarScriptPython("setup_ambiente");
-    });
-  }
 
   // Botão de Treinamento IA
   if (btnTreinamentoIA) {
@@ -28,13 +17,6 @@ document.addEventListener("DOMContentLoaded", function () {
   if (btnIniciarCameras) {
     btnIniciarCameras.addEventListener("click", function () {
       executarScriptPython("iniciar_cameras");
-    });
-  }
-
-  // Botão de Parar Câmeras
-  if (btnPararCameras) {
-    btnPararCameras.addEventListener("click", function () {
-      pararCameras();
     });
   }
 
@@ -182,11 +164,7 @@ function finalizarProcesso(acao, consoleOutput, modal) {
   }
 
   // Executar ação específica após conclusão
-  if (acao === "setup_ambiente") {
-    consoleOutput.innerHTML +=
-      "> Ambiente configurado com sucesso! Sistema pronto para uso.\n";
-    mostrarNotificacao("success", "Ambiente configurado com sucesso!");
-  } else if (acao === "treinamento_ia") {
+  if (acao === "treinamento_ia") {
     consoleOutput.innerHTML +=
       "> Treinamento de IA concluído. Modelo pronto para uso.\n";
     mostrarNotificacao("success", "Treinamento concluído com sucesso!");
@@ -234,24 +212,12 @@ function atualizarProgresso(percentual, mensagem) {
 }
 
 function atualizarEstadoBotoes(habilitado) {
-  const botoes = [
-    "btnConfigurarAmbiente",
-    "btnTreinamentoIA",
-    "btnIniciarCameras",
-    "btnPararCameras",
-  ];
+  const botoes = ["btnTreinamentoIA", "btnIniciarCameras"];
 
   botoes.forEach((botaoId) => {
     const botao = document.getElementById(botaoId);
     if (botao) {
-      if (botaoId === "btnPararCameras") {
-        // Botão de parar só fica habilitado quando as câmeras estão ativas
-        botao.disabled = !camerasAtivas;
-        botao.classList.toggle("btn-danger", camerasAtivas);
-        botao.classList.toggle("btn-secondary", !camerasAtivas);
-      } else {
-        botao.disabled = !habilitado;
-      }
+      botao.disabled = !habilitado;
     }
   });
 
@@ -265,58 +231,6 @@ function atualizarEstadoBotoes(habilitado) {
       statusIndicator.className = "status-indicator";
       statusIndicator.title = "Câmeras inativas";
     }
-  }
-}
-
-function pararCameras() {
-  if (camerasAtivas) {
-    // Simular parada das câmeras
-    const consoleOutput = document.getElementById("consoleOutput");
-    if (consoleOutput) {
-      consoleOutput.innerHTML += "> Parando sistema de câmeras...\n";
-    }
-
-    // Parar monitoramento
-    pararMonitoramentoCameras();
-
-    // Atualizar estado
-    camerasAtivas = false;
-    atualizarEstadoBotoes(true);
-
-    if (consoleOutput) {
-      consoleOutput.innerHTML += "> Sistema de câmeras parado com sucesso.\n";
-    }
-    mostrarNotificacao("info", "Sistema de câmeras parado");
-  }
-}
-
-function iniciarMonitoramentoCameras() {
-  // Limpar intervalo anterior se existir
-  if (intervaloMonitoramento) {
-    clearInterval(intervaloMonitoramento);
-  }
-
-  // Simular monitoramento das câmeras
-  intervaloMonitoramento = setInterval(() => {
-    if (camerasAtivas) {
-      const consoleOutput = document.getElementById("consoleOutput");
-      const timestamp = new Date().toLocaleTimeString();
-
-      // Simular logs de monitoramento
-      if (Math.random() > 0.7 && consoleOutput) {
-        consoleOutput.innerHTML += `> [${timestamp}] Sistema ativo - Processando frames...\n`;
-
-        // Manter o console rolável para baixo
-        consoleOutput.scrollTop = consoleOutput.scrollHeight;
-      }
-    }
-  }, 5000);
-}
-
-function pararMonitoramentoCameras() {
-  if (intervaloMonitoramento) {
-    clearInterval(intervaloMonitoramento);
-    intervaloMonitoramento = null;
   }
 }
 
