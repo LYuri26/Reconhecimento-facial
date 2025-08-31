@@ -10,7 +10,7 @@ import mysql.connector
 
 
 class FaceProcessor:
-    def __init__(self, model_path="model/deepface_model.pkl", threshold=0.40):
+    def __init__(self, model_path="model/deepface_model.pkl", threshold=0.45):
         self.MODEL_PATH = model_path
         self.THRESHOLD = threshold
         self.EMBEDDING_MODEL = "Facenet512"
@@ -29,6 +29,9 @@ class FaceProcessor:
         # Carrega o modelo na inicialização
         self.load_model()
         self.initialize_database()
+        self.processing_interval = 0.2  # Reduzido para 200ms (5 FPS)
+        self.skip_frames = 2  # Pula 2 frames entre processamentos
+        self.frame_count = 0
 
     def load_model(self):
         """Carrega o modelo de reconhecimento facial"""
@@ -110,17 +113,18 @@ class FaceProcessor:
             emb1 = np.array(emb1, dtype=np.float32)
             emb2 = np.array(emb2, dtype=np.float32)
 
-            # Normaliza os embeddings
-            emb1 = emb1 / np.linalg.norm(emb1)
-            emb2 = emb2 / np.linalg.norm(emb2)
+            # Normalização L2 correta
+            emb1_norm = emb1 / np.linalg.norm(emb1)
+            emb2_norm = emb2 / np.linalg.norm(emb2)
 
-            # Calcula a similaridade cosseno
-            similarity = np.dot(emb1, emb2)
+            # Calcula a similaridade cosseno (já normalizada entre -1 e 1)
+            similarity = np.dot(emb1_norm, emb2_norm)
 
-            # Ajusta para ficar entre 0 e 1
-            similarity = max(0.0, min(1.0, (similarity + 1) / 2))
+            # Ajusta para ficar entre 0 e 1 (mais intuitivo)
+            similarity = (similarity + 1) / 2
 
-            return similarity
+            return max(0.0, min(1.0, similarity))
+
         except Exception as e:
             logging.error(f"Erro no cálculo de similaridade: {str(e)}")
             return 0.0
@@ -221,8 +225,51 @@ class FaceProcessor:
             if frame is None or frame.size == 0:
                 return frame
 
+            # Controle de frames para pular processamento
+            self.frame_count += 1
+            if self.frame_count % (self.skip_frames + 1) != 0:
+                # Reutiliza detecção anterior se disponível
+                if self.last_faces:
+                    display_frame = frame.copy()
+                    for face_data in self.last_faces:
+                        x, y, w, h = (
+                            face_data["x"],
+                            face_data["y"],
+                            face_data["w"],
+                            face_data["h"],
+                        )
+                        label = face_data.get("label", "Processando...")
+                        color = face_data.get("color", (0, 255, 255))
+
+                        cv2.rectangle(display_frame, (x, y), (x + w, y + h), color, 2)
+                        text_y = max(y - 10, 20)
+                        cv2.putText(
+                            display_frame,
+                            label,
+                            (x, text_y),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.6,
+                            color,
+                            2,
+                        )
+                    return display_frame
+                return frame
+
             display_frame = frame.copy()
             current_time = time.time()
+
+            # VERIFICA SE A CÂMERA ESTÁ TAMPADA
+            if self.is_camera_covered(frame):
+                cv2.putText(
+                    display_frame,
+                    "CAMERA TAMPADA/ESCURA",
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 0, 255),
+                    2,
+                )
+                return display_frame
 
             # Limita a taxa de processamento para melhor performance
             if current_time - self.last_processed_time < self.processing_interval:
@@ -334,7 +381,60 @@ class FaceProcessor:
 
         except Exception as e:
             logging.error(f"Erro no processamento do frame: {str(e)}")
+            # Em caso de erro, retorna o frame original sem processamento
             return frame
+
+    def is_camera_covered(self, frame):
+        """Detecta se a câmera está tampada/escura com múltiplas verificações"""
+        try:
+            if frame is None or frame.size == 0:
+                return True
+
+            # Converte para escala de cinza
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+            # Calcula estatísticas da imagem
+            mean_intensity = np.mean(gray)  # Brilho médio (0-255)
+            variance = np.var(gray)  # Variância (contraste)
+            min_val = np.min(gray)  # Valor mínimo
+            max_val = np.max(gray)  # Valor máximo
+
+            # Calcula histograma para análise de distribuição
+            hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
+            hist = hist.flatten()
+
+            # Verifica se a imagem está predominantemente escura
+            dark_pixels = np.sum(hist[:50])  # Pixels com valor 0-50
+            total_pixels = frame.shape[0] * frame.shape[1]
+            dark_ratio = dark_pixels / total_pixels
+
+            # Critérios para considerar câmera tampada:
+            # 1. Brilho médio muito baixo
+            # 2. Pouca variação (imagem uniforme)
+            # 3. Alta porcentagem de pixels escuros
+            # 4. Baixa diferença entre min e max (pouco contraste)
+
+            camera_covered = (
+                mean_intensity < 25  # Muito escuro
+                or variance < 50  # Pouca variação
+                or dark_ratio > 0.8  # Mais de 80% pixels escuros
+                or (max_val - min_val) < 30  # Pouco contraste
+            )
+
+            # Log para debugging (opcional)
+            if camera_covered:
+                logging.debug(
+                    f"Câmera tampada detectada - "
+                    f"Brilho: {mean_intensity:.1f}, "
+                    f"Variância: {variance:.1f}, "
+                    f"Escuros: {dark_ratio:.2%}"
+                )
+
+            return camera_covered
+
+        except Exception as e:
+            logging.error(f"Erro ao verificar câmera tampada: {str(e)}")
+            return False
 
     def cleanup(self):
         """Limpeza de recursos"""

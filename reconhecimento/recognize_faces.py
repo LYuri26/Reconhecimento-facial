@@ -112,17 +112,21 @@ class FaceRecognizer:
         print("🎮 Controles:")
         print("   - Pressione 'q' para sair")
         print("   - Pressione 'r' para reconectar RTSP")
+        print("   - Pressione 'f' para modo tela cheia/Janela")
         print("=" * 60)
 
         # Cria a janela apenas uma vez
         if not self.window_created:
-            cv2.namedWindow("Reconhecimento Facial", cv2.WINDOW_NORMAL)
+            cv2.namedWindow(
+                "Reconhecimento Facial", cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO
+            )
             cv2.resizeWindow("Reconhecimento Facial", self.width, self.height)
             self.window_created = True
 
         last_time = time.time()
         frames_processed = 0
         self.running = True
+        fullscreen = False  # Controle de tela cheia
 
         while self.running:
             try:
@@ -153,11 +157,17 @@ class FaceRecognizer:
                     )
                     cv2.imshow("Reconhecimento Facial", waiting_frame)
 
-                # Verifica se o usuário fechou a janela (clique no X)
-                if (
-                    cv2.getWindowProperty("Reconhecimento Facial", cv2.WND_PROP_VISIBLE)
-                    < 1
-                ):
+                # VERIFICAÇÃO MELHORADA do fechamento da janela
+                try:
+                    # Método mais confiável para verificar se a janela foi fechada
+                    window_visible = cv2.getWindowProperty(
+                        "Reconhecimento Facial", cv2.WND_PROP_VISIBLE
+                    )
+                    if window_visible < 1:
+                        print("\n🖱️  Janela fechada pelo usuário (botão X)")
+                        break
+                except:
+                    # Se ocorrer erro na verificação, assume que a janela foi fechada
                     print("\n🖱️  Janela fechada pelo usuário")
                     break
 
@@ -180,6 +190,25 @@ class FaceRecognizer:
                     self.reconnect_camera()
                     # Atualiza a informação da câmera após reconexão
                     camera_info = self.camera_manager.get_camera_info()
+                elif key == ord("f"):  # Tecla 'f' para toggle tela cheia
+                    fullscreen = not fullscreen
+                    if fullscreen:
+                        cv2.setWindowProperty(
+                            "Reconhecimento Facial",
+                            cv2.WND_PROP_FULLSCREEN,
+                            cv2.WINDOW_FULLSCREEN,
+                        )
+                        print("📺 Modo tela cheia ativado")
+                    else:
+                        cv2.setWindowProperty(
+                            "Reconhecimento Facial",
+                            cv2.WND_PROP_FULLSCREEN,
+                            cv2.WINDOW_NORMAL,
+                        )
+                        cv2.resizeWindow(
+                            "Reconhecimento Facial", self.width, self.height
+                        )
+                        print("📺 Modo janela ativado")
 
             except Exception as e:
                 logging.error(f"Erro no loop principal: {str(e)}")
