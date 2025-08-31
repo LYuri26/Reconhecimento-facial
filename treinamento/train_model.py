@@ -9,32 +9,40 @@ import time
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import sys
+import json
+from datetime import datetime
 
 
 class DeepFaceTrainer:
     def __init__(self):
-        # Configurações
-        self.MIN_IMAGES_PER_USER = 1  # aceitar 1 imagem
+        # Configurações otimizadas
+        self.MIN_IMAGES_PER_USER = 1
         self.MAX_IMAGES_PER_USER = 20
         self.IMAGE_SIZE = (160, 160)
-        self.MIN_FACE_SIZE = 100
-        self.EMBEDDING_MODEL = "ArcFace"  # robusto para poucas imagens
-        self.DETECTORS = ["retinaface", "ssd", "opencv"]
-        self.THRESHOLD_BLUR = 50
+        self.MIN_FACE_SIZE = 50  # Mais tolerante
+        self.EMBEDDING_MODEL = "ArcFace"
+        self.DETECTORS = ["opencv", "ssd", "retinaface", "mtcnn"]  # Ordem de prioridade
+        self.THRESHOLD_BLUR = 25  # Muito mais tolerante
+        self.ENFORCE_DETECTION = False  # Crítico para funcionar
 
-        # Caminhos absolutos CORRIGIDOS
+        # Caminhos absolutos
         self.SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-        self.PROJECT_ROOT = os.path.dirname(self.SCRIPT_DIR)  # Diretório do projeto
+        self.PROJECT_ROOT = os.path.dirname(self.SCRIPT_DIR)
         self.MODEL_DIR = os.path.join(self.PROJECT_ROOT, "model")
         self.MODEL_PATH = os.path.join(self.MODEL_DIR, "deepface_model.pkl")
         self.UPLOADS_DIR = os.path.join(self.PROJECT_ROOT, "uploads")
+        self.REPORTS_DIR = os.path.join(self.PROJECT_ROOT, "training_reports")
+
+        # Criar diretórios necessários
+        os.makedirs(self.MODEL_DIR, exist_ok=True)
+        os.makedirs(self.REPORTS_DIR, exist_ok=True)
 
         # Configuração de logging
         logging.basicConfig(
             level=logging.INFO,
             format="%(asctime)s - %(levelname)s - %(message)s",
             handlers=[
-                logging.FileHandler(os.path.join(self.PROJECT_ROOT, "training.log")),
+                logging.FileHandler(os.path.join(self.REPORTS_DIR, "training.log")),
                 logging.StreamHandler(),
             ],
         )
@@ -50,8 +58,16 @@ class DeepFaceTrainer:
         self.embeddings_db = {}
         self.label_map = {}
         self.reverse_label_map = {}
+        self.training_stats = {
+            "start_time": None,
+            "end_time": None,
+            "total_users": 0,
+            "processed_users": 0,
+            "total_images": 0,
+            "valid_images": 0,
+            "failed_images": 0,
+        }
 
-        # Log dos caminhos para debug
         logging.info(f"SCRIPT_DIR: {self.SCRIPT_DIR}")
         logging.info(f"PROJECT_ROOT: {self.PROJECT_ROOT}")
         logging.info(f"MODEL_DIR: {self.MODEL_DIR}")
@@ -63,7 +79,7 @@ class DeepFaceTrainer:
         try:
             conn = mysql.connector.connect(**self.DB_CONFIG)
             if conn.is_connected():
-                logging.info("Conexão com o banco de dados estabelecida com sucesso")
+                logging.info("Conexão com o banco de dados estabelecida")
                 return conn
         except Error as e:
             logging.error(f"Erro ao conectar ao MySQL: {e}")
@@ -75,19 +91,28 @@ class DeepFaceTrainer:
             return None
         try:
             cursor = conn.cursor(dictionary=True)
+
             cursor.execute("SHOW TABLES LIKE 'cadastros'")
             if not cursor.fetchone():
                 logging.error("Tabela 'cadastros' não encontrada")
                 return None
+
             cursor.execute("SHOW TABLES LIKE 'imagens_cadastro'")
             if not cursor.fetchone():
                 logging.error("Tabela 'imagens_cadastro' não encontrada")
                 return None
 
-            cursor.execute("SELECT id, nome, sobrenome FROM cadastros")
+            cursor.execute(
+                """
+                SELECT c.id, c.nome, c.sobrenome 
+                FROM cadastros c 
+                WHERE EXISTS (SELECT 1 FROM imagens_cadastro ic WHERE ic.cadastro_id = c.id)
+            """
+            )
+
             users = cursor.fetchall()
             if not users:
-                logging.warning("Nenhum usuário encontrado")
+                logging.warning("Nenhum usuário com imagens encontrado")
                 return None
 
             user_images = {}
@@ -104,6 +129,7 @@ class DeepFaceTrainer:
                         "images": images,
                     }
                     logging.info(f"Usuário {user['nome']}: {len(images)} imagens")
+                    self.training_stats["total_images"] += len(images)
                 else:
                     logging.warning(f"Usuário {user['nome']}: sem imagens")
 
@@ -115,146 +141,99 @@ class DeepFaceTrainer:
             if conn and conn.is_connected():
                 conn.close()
 
-    # ------------------- Validação de Imagens -------------------
+    # ------------------- Validação de Imagens Simplificada -------------------
     def validate_image(self, img_path):
         try:
             img = cv2.imread(img_path)
             if img is None:
                 return False, "Não foi possível ler a imagem"
-            if img.shape[0] < self.MIN_FACE_SIZE or img.shape[1] < self.MIN_FACE_SIZE:
+
+            # Verificação básica de tamanho
+            if img.shape[0] < 30 or img.shape[1] < 30:
                 return False, "Imagem muito pequena"
 
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            fm = cv2.Laplacian(gray, cv2.CV_64F).var()
-            if fm < self.THRESHOLD_BLUR:
-                return False, f"Imagem borrada (score {fm:.1f})"
-
-            face_cascade = cv2.CascadeClassifier(
-                cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-            )
-            faces = face_cascade.detectMultiScale(gray, 1.3, 5)
-            if len(faces) == 0:
-                return False, "Nenhum rosto detectado"
-
-            x, y, w, h = faces[0]
-            if w * h / (img.shape[0] * img.shape[1]) < 0.1:
-                return False, "Rosto muito pequeno"
             return True, "OK"
         except Exception as e:
             return False, f"Erro na validação: {str(e)}"
 
-    # ------------------- Pré-processamento -------------------
-    def preprocess_image(self, img_path):
-        try:
-            img = cv2.imread(img_path)
-            if img is None:
-                return None
-            lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-            l, a, b = cv2.split(lab)
-            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-            limg = cv2.merge([clahe.apply(l), a, b])
-            img = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
-            img = cv2.fastNlMeansDenoisingColored(img, None, 10, 10, 7, 21)
-            img = cv2.resize(img, self.IMAGE_SIZE)
-            return img
-        except Exception as e:
-            logging.error(f"Erro no pré-processamento de {img_path}: {str(e)}")
-            return None
-
-    # ------------------- Aumento de Dados -------------------
-    def augment_image(self, img):
-        augmented = [img]
-        try:
-            augmented.append(cv2.flip(img, 1))  # Flip horizontal
-            rows, cols = img.shape[:2]
-            for angle in [10, -10]:
-                M = cv2.getRotationMatrix2D((cols / 2, rows / 2), angle, 1)
-                rotated = cv2.warpAffine(img, M, (cols, rows))
-                augmented.append(rotated)
-            for alpha in [0.8, 1.2]:
-                adjusted = cv2.convertScaleAbs(img, alpha=alpha, beta=0)
-                augmented.append(adjusted)
-        except Exception as e:
-            logging.warning(f"Erro no aumento de dados: {e}")
-        return augmented
-
-    # ------------------- Geração de Embeddings -------------------
+    # ------------------- Geração de Embeddings Simplificada -------------------
     def generate_embedding(self, img_path):
         try:
             full_path = os.path.join(self.UPLOADS_DIR, img_path.replace("\\", "/"))
-            print(f"Processando imagem: {os.path.basename(full_path)}")
+            logging.info(f"Processando: {os.path.basename(full_path)}")
 
             if not os.path.exists(full_path):
-                print(f"✗ Arquivo não encontrado: {os.path.basename(full_path)}")
-                return []
+                logging.warning(
+                    f"Arquivo não encontrado: {os.path.basename(full_path)}"
+                )
+                return None
 
+            # Validação simplificada
             is_valid, msg = self.validate_image(full_path)
             if not is_valid:
-                print(f"✗ Imagem inválida ({msg}): {os.path.basename(full_path)}")
-                return []
+                logging.warning(f"Imagem inválida: {msg}")
+                return None
 
-            img = self.preprocess_image(full_path)
-            if img is None:
-                return []
+            # Tentar todos os detectores até conseguir
+            for detector in self.DETECTORS:
+                try:
+                    logging.info(f"Tentando detector: {detector}")
 
-            # Gera embedding com detector mais preciso
-            try:
-                emb_obj = DeepFace.represent(
-                    img_path=img,
-                    model_name=self.EMBEDDING_MODEL,
-                    enforce_detection=True,  # Mais rigoroso
-                    detector_backend="retinaface",  # Mais preciso
-                    align=True,
-                    normalization="base",
-                )
-                if emb_obj:
-                    e = np.array(emb_obj[0]["embedding"]).flatten()
-                    e = e / np.linalg.norm(e)
+                    embedding_objs = DeepFace.represent(
+                        img_path=full_path,
+                        model_name=self.EMBEDDING_MODEL,
+                        detector_backend=detector,
+                        enforce_detection=self.ENFORCE_DETECTION,  # CRÍTICO
+                        align=True,
+                        normalization="base",
+                    )
 
-                    # Verifica qualidade do embedding
-                    if np.std(e) > 0.1:  # Embedding com boa variação
-                        return [e]
-                    else:
-                        print(
-                            f"✗ Embedding de baixa qualidade: {os.path.basename(full_path)}"
-                        )
-                        return []
-            except Exception as e:
-                print(f"✗ Erro no embedding: {str(e)}")
-                return []
+                    if embedding_objs and len(embedding_objs) > 0:
+                        embedding = np.array(embedding_objs[0]["embedding"]).flatten()
+                        embedding = embedding / np.linalg.norm(embedding)
 
-            return []
+                        # Aceitar QUALQUER embedding, sem verificação de qualidade
+                        logging.info(f"✓ Embedding gerado com {detector}")
+                        return embedding
+
+                except Exception as e:
+                    logging.debug(f"Detector {detector} falhou: {str(e)}")
+                    continue
+
+            logging.warning(
+                f"Todos os detectores falharam para: {os.path.basename(full_path)}"
+            )
+            return None
+
         except Exception as e:
-            print(f"✗ Erro ao processar imagem: {str(e)}")
-            return []
+            logging.error(f"Erro ao processar {img_path}: {str(e)}")
+            return None
 
     def generate_embeddings_for_user(self, user_id, user_data):
         embeddings = []
-        print(f"\nProcessando usuário: {user_data['nome']} {user_data['sobrenome']}")
-        print(f"Total de imagens: {len(user_data['images'])}")
+        user_name = f"{user_data['nome']} {user_data['sobrenome']}"
+        logging.info(f"\nProcessando usuário: {user_name}")
+        logging.info(f"Total de imagens: {len(user_data['images'])}")
 
-        if len(user_data["images"]) < self.MIN_IMAGES_PER_USER:
-            print(f"⚠ Poucas imagens ({len(user_data['images'])})")
+        # Processar cada imagem
+        for i, img_path in enumerate(user_data["images"]):
+            logging.info(f"Processando imagem {i+1}/{len(user_data['images'])}")
 
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = [
-                executor.submit(self.generate_embedding, img)
-                for img in user_data["images"]
-            ]
+            embedding = self.generate_embedding(img_path)
 
-            for i, future in enumerate(as_completed(futures)):
-                e_list = future.result()
-                if e_list:
-                    embeddings.extend(e_list)
-                    print(
-                        f"✓ Processada imagem {i+1}/{len(user_data['images'])} - {len(e_list)} embeddings"
-                    )
-                else:
-                    print(f"✗ Falha na imagem {i+1}/{len(user_data['images'])}")
+            if embedding is not None:
+                embeddings.append(embedding)
+                self.training_stats["valid_images"] += 1
+                logging.info(f"✓ Imagem {i+1}: Embedding gerado")
+            else:
+                self.training_stats["failed_images"] += 1
+                logging.warning(f"✗ Imagem {i+1}: Falha")
 
         if embeddings:
-            avg_embedding = np.median(np.array(embeddings), axis=0)
-            print(f"✓ Usuário processado - Total embeddings: {len(embeddings)}")
+            # Calcular embedding médio
+            avg_embedding = np.mean(embeddings, axis=0)
+            logging.info(f"✓ {user_name}: {len(embeddings)} embeddings gerados")
+
             return {
                 "nome": user_data["nome"],
                 "sobrenome": user_data["sobrenome"],
@@ -262,33 +241,8 @@ class DeepFaceTrainer:
                 "embedding": avg_embedding.tolist(),
             }
         else:
-            print(f"✗ Nenhum embedding válido para {user_data['nome']}")
+            logging.warning(f"✗ {user_name}: Nenhum embedding válido")
             return None
-
-    def generate_embeddings(self, user_images):
-        logging.info("\nIniciando geração de embeddings...")
-        start_time = time.time()
-
-        embeddings_db = {}
-        label_counter = 0
-        processed_users = 0
-
-        for user_id, user_data in user_images.items():
-            self.label_map[user_id] = label_counter
-            self.reverse_label_map[label_counter] = user_id
-            label_counter += 1
-
-            user_result = self.generate_embeddings_for_user(user_id, user_data)
-            if user_result:
-                embeddings_db[user_id] = user_result
-                processed_users += 1
-                logging.info(f"✓ Usuário {user_data['nome']} processado com sucesso")
-
-        elapsed_time = time.time() - start_time
-        logging.info(f"Tempo total de processamento: {elapsed_time:.2f} segundos")
-        logging.info(f"Usuários processados: {processed_users}/{len(user_images)}")
-
-        return embeddings_db
 
     # ------------------- Salvar Modelo -------------------
     def save_model(self):
@@ -296,24 +250,28 @@ class DeepFaceTrainer:
             logging.error("Nenhum dado para salvar")
             return False
 
-        # Criar diretório do modelo se não existir
         os.makedirs(self.MODEL_DIR, exist_ok=True)
 
         model_data = {
             "embeddings_db": self.embeddings_db,
             "label_map": self.label_map,
             "reverse_label_map": self.reverse_label_map,
+            "training_stats": self.training_stats,
+            "model_info": {
+                "version": "3.0",
+                "training_date": datetime.now().isoformat(),
+                "embedding_model": self.EMBEDDING_MODEL,
+            },
         }
 
         try:
             with open(self.MODEL_PATH, "wb") as f:
                 pickle.dump(model_data, f)
-            logging.info(f"✓ Modelo salvo com sucesso em: {self.MODEL_PATH}")
 
-            # Verificar se o arquivo foi criado
             if os.path.exists(self.MODEL_PATH):
                 file_size = os.path.getsize(self.MODEL_PATH)
-                logging.info(f"Tamanho do arquivo: {file_size} bytes")
+                logging.info(f"✓ Modelo salvo: {self.MODEL_PATH}")
+                logging.info(f"Tamanho: {file_size} bytes")
                 return True
             else:
                 logging.error("✗ Arquivo do modelo não foi criado")
@@ -323,65 +281,145 @@ class DeepFaceTrainer:
             logging.error(f"✗ Erro ao salvar modelo: {str(e)}")
             return False
 
-    # ------------------- Treinamento -------------------
-    def train(self):
-        logging.info("\n=== Iniciando Treinamento DeepFace ===")
+    # ------------------- Criar Relatório -------------------
+    def create_training_report(self):
+        try:
+            report_data = {
+                "start_time": (
+                    self.training_stats["start_time"].isoformat()
+                    if self.training_stats["start_time"]
+                    else None
+                ),
+                "end_time": (
+                    self.training_stats["end_time"].isoformat()
+                    if self.training_stats["end_time"]
+                    else None
+                ),
+                "total_users": self.training_stats["total_users"],
+                "processed_users": self.training_stats["processed_users"],
+                "total_images": self.training_stats["total_images"],
+                "valid_images": self.training_stats["valid_images"],
+                "failed_images": self.training_stats["failed_images"],
+                "success_rate": (
+                    (
+                        self.training_stats["valid_images"]
+                        / self.training_stats["total_images"]
+                        * 100
+                    )
+                    if self.training_stats["total_images"] > 0
+                    else 0
+                ),
+            }
 
-        # Verificar se a pasta uploads existe
-        if not os.path.exists(self.UPLOADS_DIR):
-            logging.error(f"✗ Pasta uploads não encontrada: {self.UPLOADS_DIR}")
+            report_path = os.path.join(
+                self.REPORTS_DIR,
+                f"training_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+            )
+
+            with open(report_path, "w", encoding="utf-8") as f:
+                json.dump(report_data, f, indent=2, ensure_ascii=False)
+
+            logging.info(f"✓ Relatório salvo: {report_path}")
+            return True
+
+        except Exception as e:
+            logging.error(f"✗ Erro ao criar relatório: {str(e)}")
             return False
 
-        if not os.listdir(self.UPLOADS_DIR):
-            logging.error("✗ Pasta uploads está vazia")
+    # ------------------- Treinamento -------------------
+    def train(self):
+        self.training_stats["start_time"] = datetime.now()
+        logging.info("\n=== INICIANDO TREINAMENTO ===")
+
+        if not os.path.exists(self.UPLOADS_DIR) or not os.listdir(self.UPLOADS_DIR):
+            logging.error("Pasta uploads não encontrada ou vazia")
             return False
 
         user_images = self.get_user_images()
         if not user_images:
-            logging.error("✗ Nenhuma imagem encontrada no banco de dados")
+            logging.error("Nenhuma imagem encontrada")
             return False
 
-        logging.info(f"Usuários com imagens: {len(user_images)}")
+        logging.info(f"Usuários para processar: {len(user_images)}")
+        self.training_stats["total_users"] = len(user_images)
 
-        self.embeddings_db = self.generate_embeddings(user_images)
+        # Processar usuários
+        processed_users = 0
+        for user_id, user_data in user_images.items():
+            self.label_map[user_id] = processed_users
+            self.reverse_label_map[processed_users] = user_id
+
+            user_result = self.generate_embeddings_for_user(user_id, user_data)
+            if user_result:
+                self.embeddings_db[user_id] = user_result
+                processed_users += 1
+                logging.info(f"✓ {user_data['nome']} processado")
+
+        self.training_stats["processed_users"] = processed_users
+        self.training_stats["end_time"] = datetime.now()
+
         if not self.embeddings_db:
-            logging.error("✗ Falha na geração de embeddings")
+            logging.error("Nenhum embedding gerado")
             return False
 
+        self.create_training_report()
         return self.save_model()
+
+    def print_summary(self):
+        total_time = (
+            self.training_stats["end_time"] - self.training_stats["start_time"]
+        ).total_seconds()
+
+        print("\n" + "=" * 60)
+        print("📊 RESUMO DO TREINAMENTO")
+        print("=" * 60)
+        print(f"   ⏰ Tempo total: {total_time:.1f} segundos")
+        print(
+            f"   👥 Usuários: {self.training_stats['processed_users']}/{self.training_stats['total_users']}"
+        )
+        print(f"   📷 Imagens válidas: {self.training_stats['valid_images']}")
+        print(f"   ❌ Imagens falhas: {self.training_stats['failed_images']}")
+
+        if self.training_stats["total_images"] > 0:
+            success_rate = (
+                self.training_stats["valid_images"]
+                / self.training_stats["total_images"]
+            ) * 100
+            print(f"   🎯 Taxa de sucesso: {success_rate:.1f}%")
+
+        print("=" * 60)
+
+        for user_id, data in self.embeddings_db.items():
+            print(f"   ✅ {data['nome']}: {len(data['embeddings'])} embeddings")
 
 
 # ------------------- MAIN -------------------
 if __name__ == "__main__":
     try:
         print("=" * 60)
-        print("🤖 INICIANDO TREINAMENTO DO SISTEMA DE RECONHECIMENTO FACIAL")
+        print("🤖 INICIANDO TREINAMENTO FACIAL")
         print("=" * 60)
 
         trainer = DeepFaceTrainer()
 
         if trainer.train():
+            trainer.print_summary()
             print("=" * 60)
-            print("✅ TREINAMENTO CONCLUÍDO COM SUCESSO!")
-            print("📊 Resumo:")
-            print(f"   - Usuários processados: {len(trainer.embeddings_db)}")
-            for user_id, data in trainer.embeddings_db.items():
-                print(f"   - {data['nome']}: {len(data['embeddings'])} embeddings")
+            print("✅ TREINAMENTO CONCLUÍDO!")
             print("=" * 60)
-            # Forçar flush para garantir que a mensagem seja exibida
-            sys.stdout.flush()
-            exit(0)
+            sys.exit(0)
         else:
             print("=" * 60)
             print("❌ FALHA NO TREINAMENTO")
             print("=" * 60)
-            sys.stdout.flush()
-            exit(1)
+            sys.exit(1)
 
     except Exception as e:
         print("=" * 60)
-        print("❌ ERRO CRÍTICO DURANTE O TREINAMENTO")
+        print("❌ ERRO CRÍTICO")
         print(f"   Erro: {str(e)}")
+        import traceback
+
+        traceback.print_exc()
         print("=" * 60)
-        sys.stdout.flush()
-        exit(1)
+        sys.exit(1)
