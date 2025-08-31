@@ -39,17 +39,17 @@ class FaceRecognizer:
         self.rtsp_url = (
             "rtsp://admin:Evento0128@192.168.1.101:559/Streaming/Channels/101"
         )
-        self.width = 640
-        self.height = 480
-        self.target_fps = 10
+        self.width = 320  # Reduz a resolução para melhor performance
+        self.height = 240
+        self.target_fps = 15  # Aumenta FPS
 
         # Inicializa os módulos
         self.camera_manager = CameraManager(
             self.rtsp_url, self.width, self.height, self.target_fps
         )
-        self.face_processor = FaceProcessor()
+        self.face_processor = FaceProcessor(threshold=0.45)  # Define threshold aqui
 
-        # Controles do sistema
+        # Controles do sistema - INICIALIZA AS VARIÁVEIS AUSENTES
         self.running = False
         self.window_created = False
 
@@ -226,7 +226,7 @@ class FaceRecognizer:
             self.camera_manager = CameraManager(
                 self.rtsp_url, self.width, self.height, self.target_fps
             )
-            self.face_processor = FaceProcessor()
+            self.face_processor = FaceProcessor(threshold=0.65)
 
             if self.initialize_system():
                 print("✅ Reconexão bem-sucedida!")

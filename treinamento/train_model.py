@@ -181,7 +181,6 @@ class DeepFaceTrainer:
     # ------------------- Geração de Embeddings -------------------
     def generate_embedding(self, img_path):
         try:
-            # Caminho absoluto correto para a imagem
             full_path = os.path.join(self.UPLOADS_DIR, img_path.replace("\\", "/"))
             print(f"Processando imagem: {os.path.basename(full_path)}")
 
@@ -198,28 +197,33 @@ class DeepFaceTrainer:
             if img is None:
                 return []
 
-            augmented_imgs = self.augment_image(img)
-            embeddings = []
+            # Gera embedding com detector mais preciso
+            try:
+                emb_obj = DeepFace.represent(
+                    img_path=img,
+                    model_name=self.EMBEDDING_MODEL,
+                    enforce_detection=True,  # Mais rigoroso
+                    detector_backend="retinaface",  # Mais preciso
+                    align=True,
+                    normalization="base",
+                )
+                if emb_obj:
+                    e = np.array(emb_obj[0]["embedding"]).flatten()
+                    e = e / np.linalg.norm(e)
 
-            for i, aimg in enumerate(augmented_imgs):
-                for detector in self.DETECTORS:
-                    try:
-                        emb_obj = DeepFace.represent(
-                            img_path=aimg,
-                            model_name=self.EMBEDDING_MODEL,
-                            enforce_detection=False,
-                            detector_backend=detector,
-                            align=True,
+                    # Verifica qualidade do embedding
+                    if np.std(e) > 0.1:  # Embedding com boa variação
+                        return [e]
+                    else:
+                        print(
+                            f"✗ Embedding de baixa qualidade: {os.path.basename(full_path)}"
                         )
-                        if emb_obj:
-                            e = np.array(emb_obj[0]["embedding"]).flatten()
-                            e = e / np.linalg.norm(e)
-                            embeddings.append(e)
-                            print(f"✓ Embedding gerado para augmentação {i+1}")
-                            break
-                    except Exception as e:
-                        continue
-            return embeddings
+                        return []
+            except Exception as e:
+                print(f"✗ Erro no embedding: {str(e)}")
+                return []
+
+            return []
         except Exception as e:
             print(f"✗ Erro ao processar imagem: {str(e)}")
             return []
