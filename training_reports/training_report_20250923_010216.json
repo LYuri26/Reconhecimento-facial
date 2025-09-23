@@ -1,0 +1,10 @@
+{
+  "start_time": "2025-09-23T01:02:10.090350",
+  "end_time": "2025-09-23T01:02:16.572022",
+  "total_users": 3,
+  "processed_users": 3,
+  "total_images": 3,
+  "valid_images": 6,
+  "failed_images": 0,
+  "success_rate": 200.0
+}

@@ -10,26 +10,24 @@ import mysql.connector
 
 
 class FaceProcessor:
-    def __init__(self, model_path="model/deepface_model.pkl", threshold=0.45):
+    def __init__(self, model_path="model/deepface_model.pkl", threshold=0.75):
         self.MODEL_PATH = model_path
-        self.THRESHOLD = threshold  # Threshold mais alto para evitar falsos positivos
+        self.THRESHOLD = threshold  # Threshold aumentado para evitar falsos positivos
         self.EMBEDDING_MODEL = "Facenet512"
-        self.DETECTOR = "opencv"  # Mais rápido para tempo real
+        self.DETECTOR = "opencv"
         self.model_loaded = False
         self.embeddings_db = {}
         self.db_connection = None
 
-        # Otimizações de performance para tempo real
+        # Otimizações de performance
         self.last_processed_time = 0
-        self.processing_interval = 0.15  # Processa a cada 150ms (~6-7 FPS)
-        self.cache_size = 3  # Cache menor para economizar memória
+        self.processing_interval = 0.2  # Processa a cada 200ms (~5 FPS)
+        self.cache_size = 3
         self.embedding_cache = {}
         self.last_faces = []
-        self.skip_frames = 3  # Pula mais frames para melhor performance
+        self.skip_frames = 2
         self.frame_count = 0
-        self.min_face_size = (
-            70  # Tamanho mínimo reduzido para detectar rostos mais distantes
-        )
+        self.min_face_size = 80
 
         # Carrega o modelo na inicialização
         self.load_model()
@@ -51,14 +49,18 @@ class FaceProcessor:
 
                 # Normaliza os embeddings
                 for user_id in self.embeddings_db:
-                    if isinstance(self.embeddings_db[user_id]["embedding"], list):
-                        self.embeddings_db[user_id]["embedding"] = np.array(
-                            self.embeddings_db[user_id]["embedding"], dtype=np.float32
-                        )
+                    embedding_data = self.embeddings_db[user_id]["embedding"]
+                    if isinstance(embedding_data, list):
+                        embedding_array = np.array(embedding_data, dtype=np.float32)
+                    else:
+                        embedding_array = embedding_data
+
                     # Normalização L2
-                    norm = np.linalg.norm(self.embeddings_db[user_id]["embedding"])
+                    norm = np.linalg.norm(embedding_array)
                     if norm > 0:
-                        self.embeddings_db[user_id]["embedding"] /= norm
+                        self.embeddings_db[user_id]["embedding"] = (
+                            embedding_array / norm
+                        )
 
                 logging.info(f"Modelo carregado com {len(self.embeddings_db)} pessoas")
                 self.model_loaded = True
@@ -78,7 +80,7 @@ class FaceProcessor:
                 password="",
                 database="reconhecimento_facial",
                 autocommit=True,
-                connect_timeout=5,  # Timeout para não travar
+                connect_timeout=5,
             )
             logging.info("Conexão com o banco estabelecida")
             return True
@@ -107,30 +109,43 @@ class FaceProcessor:
                 cursor.close()
 
     def calculate_similarity(self, emb1, emb2):
-        """Calcula similaridade entre embeddings de forma precisa e eficiente"""
+        """Calcula similaridade cosseno corretamente entre 0 e 1"""
         try:
             if emb1 is None or emb2 is None:
                 return 0.0
 
-            # Garante que os embeddings são arrays numpy
-            emb1 = np.array(emb1, dtype=np.float32)
-            emb2 = np.array(emb2, dtype=np.float32)
+            # Converte para arrays numpy
+            emb1 = np.array(emb1, dtype=np.float32).flatten()
+            emb2 = np.array(emb2, dtype=np.float32).flatten()
 
             # Verifica se os embeddings são válidos
-            if np.all(emb1 == 0) or np.all(emb2 == 0):
+            if (
+                emb1.size == 0
+                or emb2.size == 0
+                or np.all(emb1 == 0)
+                or np.all(emb2 == 0)
+                or np.isnan(emb1).any()
+                or np.isnan(emb2).any()
+            ):
                 return 0.0
 
             # Normalização L2
-            emb1_norm = emb1 / (np.linalg.norm(emb1) + 1e-10)
-            emb2_norm = emb2 / (np.linalg.norm(emb2) + 1e-10)
+            norm1 = np.linalg.norm(emb1)
+            norm2 = np.linalg.norm(emb2)
 
-            # Calcula a similaridade cosseno (já normalizada entre -1 e 1)
-            similarity = np.dot(emb1_norm, emb2_norm)
+            if norm1 == 0 or norm2 == 0:
+                return 0.0
+
+            emb1_normalized = emb1 / norm1
+            emb2_normalized = emb2 / norm2
+
+            # Similaridade cosseno
+            similarity = np.dot(emb1_normalized, emb2_normalized)
 
             # Converte para escala 0-1
-            similarity = (similarity + 1) / 2
+            similarity_0_1 = (similarity + 1) / 2
 
-            return max(0.0, min(1.0, similarity))
+            return float(np.clip(similarity_0_1, 0.0, 1.0))
 
         except Exception as e:
             logging.debug(f"Erro no cálculo de similaridade: {str(e)}")
@@ -159,12 +174,12 @@ class FaceProcessor:
             # Converte para RGB
             rgb_img = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
 
-            # Gera o embedding com configurações otimizadas
+            # Gera o embedding
             embedding_obj = DeepFace.represent(
                 img_path=rgb_img,
                 model_name=self.EMBEDDING_MODEL,
-                enforce_detection=False,  # Não falha se não detectar rostos
-                detector_backend="skip",  # Pula detecção (já detectamos o rosto)
+                enforce_detection=False,
+                detector_backend="skip",
                 normalization="base",
             )
 
@@ -214,13 +229,7 @@ class FaceProcessor:
             detected_faces = []
             for x, y, w, h in faces:
                 detected_faces.append(
-                    {
-                        "x": x,
-                        "y": y,
-                        "w": w,
-                        "h": h,
-                        "confidence": 1.0,  # Haar não retorna confidence
-                    }
+                    {"x": x, "y": y, "w": w, "h": h, "confidence": 1.0}
                 )
 
             return detected_faces
@@ -230,7 +239,7 @@ class FaceProcessor:
             return []
 
     def process_frame(self, frame):
-        """Processa um frame para reconhecimento facial otimizado"""
+        """Processa um frame para reconhecimento facial"""
         try:
             if frame is None or frame.size == 0:
                 return frame
@@ -241,7 +250,7 @@ class FaceProcessor:
             # Controle de frames para pular processamento
             self.frame_count += 1
             if self.frame_count % (self.skip_frames + 1) != 0:
-                # Reutiliza detecção anterior se disponível
+                # Reutiliza detecção anterior
                 if self.last_faces:
                     for face_data in self.last_faces:
                         x, y, w, h = (
@@ -266,7 +275,7 @@ class FaceProcessor:
                         )
                 return display_frame
 
-            # VERIFICA SE A CÂMERA ESTÁ TAMPADA
+            # Verifica se a câmera está tampada
             if self.is_camera_covered(frame):
                 cv2.putText(
                     display_frame,
@@ -299,7 +308,7 @@ class FaceProcessor:
                 )
                 return display_frame
 
-            # Detecta faces (método rápido)
+            # Detecta faces
             faces = self.detect_faces_fast(frame)
             if not faces:
                 return display_frame
@@ -312,7 +321,7 @@ class FaceProcessor:
                 if face_region.size == 0:
                     continue
 
-                # Gera embedding (processamento mais leve)
+                # Gera embedding
                 live_emb = self.safe_get_embedding(face_region)
                 if live_emb is None:
                     label = "Analisando..."
@@ -322,25 +331,48 @@ class FaceProcessor:
                     )
                     continue
 
+                # Comparação com todos os usuários
                 best_match = None
                 best_score = 0
+                second_best_score = 0
 
-                # Comparação rápida com embeddings do banco
                 for user_id, user_data in self.embeddings_db.items():
-                    score = self.calculate_similarity(live_emb, user_data["embedding"])
-                    if score > best_score:
-                        best_score = score
-                        best_match = user_id
+                    # Usa TODOS os embeddings do usuário
+                    user_embeddings = user_data.get("embeddings", [])
 
-                # Verificação conservadora para evitar falsos positivos
-                if best_match and best_score >= self.THRESHOLD:
+                    for user_emb in user_embeddings:
+                        score = self.calculate_similarity(live_emb, user_emb)
+
+                        if score > best_score:
+                            second_best_score = best_score
+                            best_score = score
+                            best_match = user_id
+
+                # Verificação conservadora
+                score_difference = best_score - second_best_score
+                min_difference = 0.15  # Diferença mínima de 15%
+
+                if (
+                    best_match
+                    and best_score >= self.THRESHOLD
+                    and score_difference >= min_difference
+                ):
+
                     user_info = self.get_user_info(best_match)
-                    # Exibe apenas o primeiro nome para economizar espaço
-                    label = f"{user_info['nome']} ({best_score:.2f})"
+                    label = f"{user_info['nome']} ({best_score:.3f})"
                     color = (0, 255, 0)
+
+                    logging.info(
+                        f"Reconhecido: {user_info['nome']} - Score: {best_score:.3f}, Diff: {score_difference:.3f}"
+                    )
                 else:
                     label = "Não identificado"
                     color = (0, 0, 255)
+
+                    if best_score > 0:
+                        logging.debug(
+                            f"Score insuficiente: {best_score:.3f}, Diff: {score_difference:.3f}"
+                        )
 
                 # Armazena para reutilização
                 self.last_faces.append(
@@ -373,17 +405,10 @@ class FaceProcessor:
                 return True
 
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-            # Calcula estatísticas simples para performance
             mean_intensity = np.mean(gray)
             std_intensity = np.std(gray)
 
-            # Critérios simplificados
-            camera_covered = (
-                mean_intensity < 30  # Muito escuro
-                or std_intensity < 15  # Pouca variação (imagem uniforme)
-            )
-
+            camera_covered = mean_intensity < 30 or std_intensity < 15
             return camera_covered
 
         except Exception as e:

@@ -6,7 +6,6 @@ import sys
 import numpy as np
 from pathlib import Path
 
-# Adiciona o diretório atual ao path para importações relativas
 sys.path.insert(0, str(Path(__file__).parent))
 
 from camera_manager import CameraManager
@@ -35,28 +34,27 @@ except AttributeError:
 
 class FaceRecognizer:
     def __init__(self):
-        # Configurações do sistema - RTSP e fallback para webcam
+        # Configurações do sistema
         self.rtsp_url = (
             "rtsp://admin:Evento0128@192.168.1.101:559/Streaming/Channels/101"
         )
-        self.width = 320  # Reduz a resolução para melhor performance
-        self.height = 240
-        self.target_fps = 15  # Aumenta FPS
+        self.width = 640  # Aumentei a resolução para melhor detecção
+        self.height = 480
+        self.target_fps = 10  # Reduzi FPS para melhor processamento
 
-        # Inicializa os módulos
+        # Inicializa os módulos com threshold mais alto
         self.camera_manager = CameraManager(
             self.rtsp_url, self.width, self.height, self.target_fps
         )
-        self.face_processor = FaceProcessor(threshold=0.45)  # Define threshold aqui
+        self.face_processor = FaceProcessor(threshold=0.75)  # Threshold aumentado
 
-        # Controles do sistema - INICIALIZA AS VARIÁVEIS AUSENTES
         self.running = False
         self.window_created = False
 
     def initialize_system(self):
-        """Inicialização completa do sistema com fallback para webcam"""
+        """Inicialização completa do sistema"""
         try:
-            # Primeiro tenta webcam (mais confiável)
+            # Primeiro tenta webcam
             logging.info("Tentando conectar com webcam primeiro...")
             if self.initialize_webcam():
                 logging.info("Webcam inicializada como fallback")
@@ -79,7 +77,7 @@ class FaceRecognizer:
         """Tenta inicializar webcam"""
         try:
             self.camera_manager = CameraManager(
-                None, self.width, self.height, self.target_fps  # Sem URL RTSP
+                None, self.width, self.height, self.target_fps
             )
             return self.camera_manager.initialize_camera()
         except Exception as e:
@@ -98,7 +96,7 @@ class FaceRecognizer:
             return False
 
     def run(self):
-        """Loop principal de execução otimizado"""
+        """Loop principal de execução"""
         print("=" * 60)
         print("👁️  INICIANDO SISTEMA DE RECONHECIMENTO FACIAL")
         print("=" * 60)
@@ -111,26 +109,24 @@ class FaceRecognizer:
         print(f"📷 Câmera: {camera_info}")
         print("🎮 Controles:")
         print("   - Pressione 'q' para sair")
-        print("   - Pressione 'r' para reconectar RTSP")
-        print("   - Pressione 'f' para modo tela cheia/Janela")
+        print("   - Pressione 'r' para reconectar")
+        print("   - Pressione 'f' para modo tela cheia")
         print("=" * 60)
 
-        # Cria a janela apenas uma vez
+        # Cria a janela
         if not self.window_created:
-            cv2.namedWindow(
-                "Reconhecimento Facial", cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO
-            )
+            cv2.namedWindow("Reconhecimento Facial", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("Reconhecimento Facial", self.width, self.height)
             self.window_created = True
 
         last_time = time.time()
         frames_processed = 0
         self.running = True
-        fullscreen = False  # Controle de tela cheia
+        fullscreen = False
 
         while self.running:
             try:
-                # Obtém frame da câmera de forma não bloqueante
+                # Obtém frame da câmera
                 frame = self.camera_manager.get_frame()
 
                 if frame is not None:
@@ -138,11 +134,10 @@ class FaceRecognizer:
                     processed_frame = self.face_processor.process_frame(frame)
 
                     if processed_frame is not None:
-                        # Exibe o frame processado
                         cv2.imshow("Reconhecimento Facial", processed_frame)
                         frames_processed += 1
                 else:
-                    # Se não há frame, mostra mensagem de espera
+                    # Mensagem de espera
                     waiting_frame = np.zeros(
                         (self.height, self.width, 3), dtype=np.uint8
                     )
@@ -157,21 +152,19 @@ class FaceRecognizer:
                     )
                     cv2.imshow("Reconhecimento Facial", waiting_frame)
 
-                # VERIFICAÇÃO MELHORADA do fechamento da janela
+                # Verifica se a janela foi fechada
                 try:
-                    # Método mais confiável para verificar se a janela foi fechada
                     window_visible = cv2.getWindowProperty(
                         "Reconhecimento Facial", cv2.WND_PROP_VISIBLE
                     )
                     if window_visible < 1:
-                        print("\n🖱️  Janela fechada pelo usuário (botão X)")
+                        print("\n🖱️  Janela fechada pelo usuário")
                         break
                 except:
-                    # Se ocorrer erro na verificação, assume que a janela foi fechada
                     print("\n🖱️  Janela fechada pelo usuário")
                     break
 
-                # Cálculo de FPS a cada segundo
+                # Cálculo de FPS
                 current_time = time.time()
                 if current_time - last_time >= 1.0:
                     fps = frames_processed / (current_time - last_time)
@@ -179,18 +172,17 @@ class FaceRecognizer:
                     frames_processed = 0
                     last_time = current_time
 
-                # Controles de teclado com waitKey mais curto
+                # Controles de teclado
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord("q"):
                     print("\n⌨️  Tecla 'q' pressionada")
                     break
-                elif key == ord("r"):  # Tecla 'r' para tentar reconectar RTSP
-                    print("🔄 Tentando reconectar câmera RTSP...")
-                    logging.info("Tentando reconectar câmera RTSP...")
+                elif key == ord("r"):
+                    print("🔄 Tentando reconectar câmera...")
+                    logging.info("Tentando reconectar câmera...")
                     self.reconnect_camera()
-                    # Atualiza a informação da câmera após reconexão
                     camera_info = self.camera_manager.get_camera_info()
-                elif key == ord("f"):  # Tecla 'f' para toggle tela cheia
+                elif key == ord("f"):
                     fullscreen = not fullscreen
                     if fullscreen:
                         cv2.setWindowProperty(
@@ -217,7 +209,7 @@ class FaceRecognizer:
         self.cleanup()
 
     def reconnect_camera(self):
-        """Tenta reconectar a câmera RTSP"""
+        """Tenta reconectar a câmera"""
         try:
             self.cleanup()
             time.sleep(1)
@@ -226,14 +218,14 @@ class FaceRecognizer:
             self.camera_manager = CameraManager(
                 self.rtsp_url, self.width, self.height, self.target_fps
             )
-            self.face_processor = FaceProcessor(threshold=0.65)
+            self.face_processor = FaceProcessor(threshold=0.75)
 
             if self.initialize_system():
                 print("✅ Reconexão bem-sucedida!")
                 logging.info("Reconexão bem-sucedida!")
             else:
-                print("⚠️  Falha na reconexão, usando webcam")
-                logging.warning("Falha na reconexão, usando webcam")
+                print("⚠️  Falha na reconexão")
+                logging.warning("Falha na reconexão")
 
         except Exception as e:
             logging.error(f"Erro na reconexão: {str(e)}")
@@ -248,7 +240,7 @@ class FaceRecognizer:
         # Limpa processador facial
         self.face_processor.cleanup()
 
-        # Fecha janelas OpenCV
+        # Fecha janelas
         try:
             if self.window_created:
                 cv2.destroyAllWindows()
