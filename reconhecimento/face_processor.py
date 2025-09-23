@@ -10,9 +10,11 @@ import mysql.connector
 
 
 class FaceProcessor:
-    def __init__(self, model_path="model/deepface_model.pkl", threshold=0.75):
+    def __init__(
+        self, model_path="model/deepface_model.pkl", threshold=0.5
+    ):  # Threshold reduzido
         self.MODEL_PATH = model_path
-        self.THRESHOLD = threshold  # Threshold aumentado para evitar falsos positivos
+        self.THRESHOLD = threshold  # Threshold mais baixo para Facenet512
         self.EMBEDDING_MODEL = "Facenet512"
         self.DETECTOR = "opencv"
         self.model_loaded = False
@@ -21,12 +23,7 @@ class FaceProcessor:
 
         # Otimizações de performance
         self.last_processed_time = 0
-        self.processing_interval = 0.2  # Processa a cada 200ms (~5 FPS)
-        self.cache_size = 3
-        self.embedding_cache = {}
-        self.last_faces = []
-        self.skip_frames = 2
-        self.frame_count = 0
+        self.processing_interval = 0.3  # Aumentei o intervalo para melhor qualidade
         self.min_face_size = 80
 
         # Carrega o modelo na inicialização
@@ -47,27 +44,19 @@ class FaceProcessor:
                 data = pickle.load(f)
                 self.embeddings_db = data["embeddings_db"]
 
-                # Normaliza os embeddings
-                for user_id in self.embeddings_db:
-                    embedding_data = self.embeddings_db[user_id]["embedding"]
-                    if isinstance(embedding_data, list):
-                        embedding_array = np.array(embedding_data, dtype=np.float32)
-                    else:
-                        embedding_array = embedding_data
+            logging.info(f"✅ Modelo carregado com {len(self.embeddings_db)} pessoas")
 
-                    # Normalização L2
-                    norm = np.linalg.norm(embedding_array)
-                    if norm > 0:
-                        self.embeddings_db[user_id]["embedding"] = (
-                            embedding_array / norm
-                        )
+            # Log detalhado das pessoas carregadas
+            for user_id, data in self.embeddings_db.items():
+                logging.info(
+                    f"   👤 {data['nome']} - Embeddings: {len(data.get('embeddings', []))}"
+                )
 
-                logging.info(f"Modelo carregado com {len(self.embeddings_db)} pessoas")
-                self.model_loaded = True
-                return True
+            self.model_loaded = True
+            return True
 
         except Exception as e:
-            logging.error(f"Erro ao carregar o modelo: {str(e)}")
+            logging.error(f"❌ Erro ao carregar o modelo: {str(e)}")
             self.model_loaded = False
             return False
 
@@ -82,34 +71,15 @@ class FaceProcessor:
                 autocommit=True,
                 connect_timeout=5,
             )
-            logging.info("Conexão com o banco estabelecida")
+            logging.info("✅ Conexão com o banco estabelecida")
             return True
         except Error as e:
-            logging.warning(f"Erro na conexão com o banco: {str(e)}")
+            logging.warning(f"⚠️ Erro na conexão com o banco: {str(e)}")
             self.db_connection = None
             return False
 
-    def get_user_info(self, user_id):
-        """Obtém informações do usuário do banco de dados"""
-        if not self.db_connection:
-            return {"nome": "Desconhecido", "sobrenome": ""}
-
-        try:
-            cursor = self.db_connection.cursor(dictionary=True)
-            cursor.execute(
-                "SELECT nome, sobrenome FROM cadastros WHERE id = %s", (user_id,)
-            )
-            result = cursor.fetchone()
-            return result or {"nome": "Desconhecido", "sobrenome": ""}
-        except Error as e:
-            logging.error(f"Erro ao buscar usuário: {str(e)}")
-            return {"nome": "Desconhecido", "sobrenome": ""}
-        finally:
-            if "cursor" in locals():
-                cursor.close()
-
     def calculate_similarity(self, emb1, emb2):
-        """Calcula similaridade cosseno corretamente entre 0 e 1"""
+        """Calcula similaridade cosseno corretamente"""
         try:
             if emb1 is None or emb2 is None:
                 return 0.0
@@ -129,7 +99,7 @@ class FaceProcessor:
             ):
                 return 0.0
 
-            # Normalização L2
+            # Normalização L2 (igual ao treinamento)
             norm1 = np.linalg.norm(emb1)
             norm2 = np.linalg.norm(emb2)
 
@@ -139,20 +109,18 @@ class FaceProcessor:
             emb1_normalized = emb1 / norm1
             emb2_normalized = emb2 / norm2
 
-            # Similaridade cosseno
+            # Similaridade cosseno (já entre 0-1 para Facenet512 normalizado)
             similarity = np.dot(emb1_normalized, emb2_normalized)
 
-            # Converte para escala 0-1
-            similarity_0_1 = (similarity + 1) / 2
-
-            return float(np.clip(similarity_0_1, 0.0, 1.0))
+            logging.debug(f"Similaridade calculada: {similarity:.4f}")
+            return float(np.clip(similarity, 0.0, 1.0))
 
         except Exception as e:
             logging.debug(f"Erro no cálculo de similaridade: {str(e)}")
             return 0.0
 
     def safe_get_embedding(self, face_img):
-        """Gera embedding facial otimizado para tempo real"""
+        """Gera embedding facial de forma consistente com o treinamento"""
         try:
             if not isinstance(face_img, np.ndarray) or face_img.size == 0:
                 return None
@@ -164,46 +132,35 @@ class FaceProcessor:
             ):
                 return None
 
-            # Gera hash da imagem para cache
-            img_hash = hash(face_img.tobytes())
+            # Salva temporariamente a imagem para processamento
+            temp_path = "/tmp/temp_face.jpg"
+            cv2.imwrite(temp_path, face_img)
 
-            # Verifica se já está em cache
-            if img_hash in self.embedding_cache:
-                return self.embedding_cache[img_hash]
-
-            # Converte para RGB
-            rgb_img = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
-
-            # Gera o embedding
-            embedding_obj = DeepFace.represent(
-                img_path=rgb_img,
+            # Usa o MESMO método do treinamento
+            embedding_objs = DeepFace.represent(
+                img_path=temp_path,
                 model_name=self.EMBEDDING_MODEL,
+                detector_backend="opencv",  # Usa opencv para consistência
                 enforce_detection=False,
-                detector_backend="skip",
+                align=True,
                 normalization="base",
             )
 
-            if not embedding_obj or not isinstance(embedding_obj, list):
+            # Remove arquivo temporário
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+            if not embedding_objs or not isinstance(embedding_objs, list):
                 return None
 
-            embedding = np.array(embedding_obj[0]["embedding"], dtype=np.float32)
+            embedding = np.array(embedding_objs[0]["embedding"], dtype=np.float32)
 
-            # Verifica se o embedding é válido
-            if np.all(embedding == 0):
-                return None
-
-            # Normalização
+            # Normalização igual ao treinamento
             norm = np.linalg.norm(embedding)
             if norm == 0:
                 return None
 
             embedding = embedding / norm
-
-            # Adiciona ao cache
-            if len(self.embedding_cache) >= self.cache_size:
-                self.embedding_cache.pop(next(iter(self.embedding_cache)))
-            self.embedding_cache[img_hash] = embedding
-
             return embedding
 
         except Exception as e:
@@ -211,7 +168,7 @@ class FaceProcessor:
             return None
 
     def detect_faces_fast(self, frame):
-        """Detecção de faces otimizada para tempo real"""
+        """Detecção de faces otimizada"""
         try:
             # Usa detector Haar Cascade para maior velocidade
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -228,15 +185,56 @@ class FaceProcessor:
 
             detected_faces = []
             for x, y, w, h in faces:
-                detected_faces.append(
-                    {"x": x, "y": y, "w": w, "h": h, "confidence": 1.0}
-                )
+                detected_faces.append({"x": x, "y": y, "w": w, "h": h})
 
             return detected_faces
 
         except Exception as e:
             logging.error(f"Erro na detecção de faces: {str(e)}")
             return []
+
+    def recognize_face(self, live_embedding):
+        """Reconhece uma face baseada no embedding"""
+        try:
+            if not self.model_loaded or not self.embeddings_db:
+                return None, 0.0
+
+            best_match = None
+            best_similarity = 0.0
+
+            for user_id, user_data in self.embeddings_db.items():
+                # Usa o embedding médio (principal) para comparação
+                known_embedding = user_data.get("embedding")
+
+                if known_embedding is None:
+                    continue
+
+                similarity = self.calculate_similarity(live_embedding, known_embedding)
+
+                logging.info(
+                    f"Comparando: {user_data['nome']} - Similaridade: {similarity:.4f}"
+                )
+
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best_match = user_id
+
+            # Verifica se atingiu o threshold
+            if best_match and best_similarity >= self.THRESHOLD:
+                logging.info(
+                    f"✅ MATCH: {best_match} - Similaridade: {best_similarity:.4f}"
+                )
+                return best_match, best_similarity
+            else:
+                if best_match:
+                    logging.info(
+                        f"❌ Threshold não atingido: {best_similarity:.4f} < {self.THRESHOLD}"
+                    )
+                return None, best_similarity
+
+        except Exception as e:
+            logging.error(f"Erro no reconhecimento: {str(e)}")
+            return None, 0.0
 
     def process_frame(self, frame):
         """Processa um frame para reconhecimento facial"""
@@ -247,53 +245,11 @@ class FaceProcessor:
             display_frame = frame.copy()
             current_time = time.time()
 
-            # Controle de frames para pular processamento
-            self.frame_count += 1
-            if self.frame_count % (self.skip_frames + 1) != 0:
-                # Reutiliza detecção anterior
-                if self.last_faces:
-                    for face_data in self.last_faces:
-                        x, y, w, h = (
-                            face_data["x"],
-                            face_data["y"],
-                            face_data["w"],
-                            face_data["h"],
-                        )
-                        label = face_data.get("label", "Processando...")
-                        color = face_data.get("color", (0, 255, 255))
-
-                        cv2.rectangle(display_frame, (x, y), (x + w, y + h), color, 2)
-                        text_y = max(y - 10, 20)
-                        cv2.putText(
-                            display_frame,
-                            label,
-                            (x, text_y),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.6,
-                            color,
-                            2,
-                        )
-                return display_frame
-
-            # Verifica se a câmera está tampada
-            if self.is_camera_covered(frame):
-                cv2.putText(
-                    display_frame,
-                    "CAMERA TAMPADA/ESCURA",
-                    (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (0, 0, 255),
-                    2,
-                )
-                return display_frame
-
             # Limita a taxa de processamento
             if current_time - self.last_processed_time < self.processing_interval:
                 return display_frame
 
             self.last_processed_time = current_time
-            self.last_faces = []
 
             # Verifica se o modelo foi carregado
             if not self.model_loaded:
@@ -326,58 +282,21 @@ class FaceProcessor:
                 if live_emb is None:
                     label = "Analisando..."
                     color = (0, 255, 255)
-                    self.last_faces.append(
-                        {"x": x, "y": y, "w": w, "h": h, "label": label, "color": color}
-                    )
-                    continue
-
-                # Comparação com todos os usuários
-                best_match = None
-                best_score = 0
-                second_best_score = 0
-
-                for user_id, user_data in self.embeddings_db.items():
-                    # Usa TODOS os embeddings do usuário
-                    user_embeddings = user_data.get("embeddings", [])
-
-                    for user_emb in user_embeddings:
-                        score = self.calculate_similarity(live_emb, user_emb)
-
-                        if score > best_score:
-                            second_best_score = best_score
-                            best_score = score
-                            best_match = user_id
-
-                # Verificação conservadora
-                score_difference = best_score - second_best_score
-                min_difference = 0.15  # Diferença mínima de 15%
-
-                if (
-                    best_match
-                    and best_score >= self.THRESHOLD
-                    and score_difference >= min_difference
-                ):
-
-                    user_info = self.get_user_info(best_match)
-                    label = f"{user_info['nome']} ({best_score:.3f})"
-                    color = (0, 255, 0)
-
-                    logging.info(
-                        f"Reconhecido: {user_info['nome']} - Score: {best_score:.3f}, Diff: {score_difference:.3f}"
-                    )
                 else:
-                    label = "Não identificado"
-                    color = (0, 0, 255)
+                    # Reconhece a face
+                    user_id, similarity = self.recognize_face(live_emb)
 
-                    if best_score > 0:
-                        logging.debug(
-                            f"Score insuficiente: {best_score:.3f}, Diff: {score_difference:.3f}"
+                    if user_id:
+                        user_info = self.get_user_info(user_id)
+                        label = f"{user_info['nome']} ({similarity:.3f})"
+                        color = (0, 255, 0)  # Verde para reconhecido
+                    else:
+                        label = (
+                            f"Não identificado ({similarity:.3f})"
+                            if similarity > 0
+                            else "Não identificado"
                         )
-
-                # Armazena para reutilização
-                self.last_faces.append(
-                    {"x": x, "y": y, "w": w, "h": h, "label": label, "color": color}
-                )
+                        color = (0, 0, 255)  # Vermelho para não reconhecido
 
                 # Desenha retângulo e label
                 cv2.rectangle(display_frame, (x, y), (x + w, y + h), color, 2)
@@ -397,6 +316,25 @@ class FaceProcessor:
         except Exception as e:
             logging.error(f"Erro no processamento do frame: {str(e)}")
             return frame
+
+    def get_user_info(self, user_id):
+        """Obtém informações do usuário"""
+        if not self.db_connection:
+            return {"nome": "Desconhecido", "sobrenome": ""}
+
+        try:
+            cursor = self.db_connection.cursor(dictionary=True)
+            cursor.execute(
+                "SELECT nome, sobrenome FROM cadastros WHERE id = %s", (user_id,)
+            )
+            result = cursor.fetchone()
+            return result or {"nome": "Desconhecido", "sobrenome": ""}
+        except Error as e:
+            logging.error(f"Erro ao buscar usuário: {str(e)}")
+            return {"nome": "Desconhecido", "sobrenome": ""}
+        finally:
+            if "cursor" in locals():
+                cursor.close()
 
     def is_camera_covered(self, frame):
         """Detecta se a câmera está tampada/escura"""
