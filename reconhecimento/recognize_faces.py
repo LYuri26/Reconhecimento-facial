@@ -1,3 +1,4 @@
+# recognize_faces.py - ATUALIZADO
 import cv2
 import time
 import logging
@@ -11,15 +12,16 @@ sys.path.insert(0, str(Path(__file__).parent))
 from camera_manager import CameraManager
 from face_processor import FaceProcessor
 
-# Configurações para evitar travamentos
+# Configurações otimizadas para catraca
 os.environ["QT_QPA_PLATFORM"] = "xcb"
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Menos logs
 os.environ["OPENCV_VIDEOIO_DEBUG"] = "0"
 os.environ["OPENCV_LOG_LEVEL"] = "ERROR"
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # CPU only para estabilidade
 
-# Configuração de logging
+# Configuração de logging otimizada
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,  # Menos logs
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[logging.FileHandler("face_recognition.log"), logging.StreamHandler()],
 )
@@ -34,33 +36,36 @@ except AttributeError:
 
 class FaceRecognizer:
     def __init__(self):
-        # Configurações do sistema
+        # Configurações otimizadas para catraca
         self.rtsp_url = (
             "rtsp://admin:Evento0128@192.168.1.101:559/Streaming/Channels/101"
         )
-        self.width = 640  # Aumentei a resolução para melhor detecção
+        self.width = 640
         self.height = 480
-        self.target_fps = 10  # Reduzi FPS para melhor processamento
+        self.target_fps = 15  # Aumentado para resposta mais rápida
 
-        # Inicializa os módulos com threshold mais alto
+        # Inicializa os módulos com configurações otimizadas
         self.camera_manager = CameraManager(
             self.rtsp_url, self.width, self.height, self.target_fps
         )
-        self.face_processor = FaceProcessor(threshold=0.75)  # Threshold aumentado
+        self.face_processor = FaceProcessor(threshold=0.65)  # Otimizado
 
         self.running = False
         self.window_created = False
+        self.last_recognition_time = 0
+        self.recognition_cooldown = 2  # segundos entre reconhecimentos
 
     def initialize_system(self):
-        """Inicialização completa do sistema"""
+        """Inicialização otimizada"""
         try:
-            # Primeiro tenta webcam
-            logging.info("Tentando conectar com webcam primeiro...")
+            logging.info("Inicializando sistema de catraca...")
+
+            # Tenta webcam primeiro (fallback rápido)
             if self.initialize_webcam():
                 logging.info("Webcam inicializada como fallback")
                 return True
 
-            # Se webcam falhar, tenta RTSP
+            # Tenta RTSP se disponível
             if self.rtsp_url:
                 logging.info("Tentando conectar com câmera RTSP...")
                 if self.initialize_rtsp():
@@ -74,199 +79,221 @@ class FaceRecognizer:
             return False
 
     def initialize_webcam(self):
-        """Tenta inicializar webcam"""
+        """Inicialização otimizada da webcam"""
         try:
             self.camera_manager = CameraManager(
                 None, self.width, self.height, self.target_fps
             )
             return self.camera_manager.initialize_camera()
         except Exception as e:
-            logging.error(f"Erro ao inicializar webcam: {str(e)}")
+            logging.debug(f"Webcam não disponível: {str(e)}")
             return False
 
     def initialize_rtsp(self):
-        """Tenta inicializar RTSP"""
+        """Inicialização otimizada do RTSP"""
         try:
             self.camera_manager = CameraManager(
                 self.rtsp_url, self.width, self.height, self.target_fps
             )
-            return self.camera_manager.initialize_camera()
+            success = self.camera_manager.initialize_camera()
+            if success:
+                logging.info("✅ Câmera RTSP conectada")
+            return success
         except Exception as e:
             logging.error(f"Erro ao inicializar RTSP: {str(e)}")
             return False
 
-    def run(self):
-        """Loop principal de execução"""
-        print("=" * 60)
-        print("👁️  INICIANDO SISTEMA DE RECONHECIMENTO FACIAL")
-        print("=" * 60)
-
-        if not self.initialize_system():
-            print("❌ Falha ao inicializar o sistema de câmeras")
-            return
-
-        camera_info = self.camera_manager.get_camera_info()
-        print(f"📷 Câmera: {camera_info}")
-        print("🎮 Controles:")
-        print("   - Pressione 'q' para sair")
-        print("   - Pressione 'r' para reconectar")
-        print("   - Pressione 'f' para modo tela cheia")
-        print("=" * 60)
-
-        # Cria a janela
-        if not self.window_created:
-            cv2.namedWindow("Reconhecimento Facial", cv2.WINDOW_NORMAL)
-            cv2.resizeWindow("Reconhecimento Facial", self.width, self.height)
-            self.window_created = True
-
-        last_time = time.time()
-        frames_processed = 0
-        self.running = True
-        fullscreen = False
-
-        while self.running:
-            try:
-                # Obtém frame da câmera
-                frame = self.camera_manager.get_frame()
-
-                if frame is not None:
-                    # Processa o frame
-                    processed_frame = self.face_processor.process_frame(frame)
-
-                    if processed_frame is not None:
-                        cv2.imshow("Reconhecimento Facial", processed_frame)
-                        frames_processed += 1
-                else:
-                    # Mensagem de espera
-                    waiting_frame = np.zeros(
-                        (self.height, self.width, 3), dtype=np.uint8
-                    )
-                    cv2.putText(
-                        waiting_frame,
-                        "Aguardando frames da camera...",
-                        (50, self.height // 2),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (255, 255, 255),
-                        2,
-                    )
-                    cv2.imshow("Reconhecimento Facial", waiting_frame)
-
-                # Verifica se a janela foi fechada
-                try:
-                    window_visible = cv2.getWindowProperty(
-                        "Reconhecimento Facial", cv2.WND_PROP_VISIBLE
-                    )
-                    if window_visible < 1:
-                        print("\n🖱️  Janela fechada pelo usuário")
-                        break
-                except:
-                    print("\n🖱️  Janela fechada pelo usuário")
-                    break
-
-                # Cálculo de FPS
-                current_time = time.time()
-                if current_time - last_time >= 1.0:
-                    fps = frames_processed / (current_time - last_time)
-                    logging.info(f"FPS: {fps:.2f} - {camera_info}")
-                    frames_processed = 0
-                    last_time = current_time
-
-                # Controles de teclado
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord("q"):
-                    print("\n⌨️  Tecla 'q' pressionada")
-                    break
-                elif key == ord("r"):
-                    print("🔄 Tentando reconectar câmera...")
-                    logging.info("Tentando reconectar câmera...")
-                    self.reconnect_camera()
-                    camera_info = self.camera_manager.get_camera_info()
-                elif key == ord("f"):
-                    fullscreen = not fullscreen
-                    if fullscreen:
-                        cv2.setWindowProperty(
-                            "Reconhecimento Facial",
-                            cv2.WND_PROP_FULLSCREEN,
-                            cv2.WINDOW_FULLSCREEN,
-                        )
-                        print("📺 Modo tela cheia ativado")
-                    else:
-                        cv2.setWindowProperty(
-                            "Reconhecimento Facial",
-                            cv2.WND_PROP_FULLSCREEN,
-                            cv2.WINDOW_NORMAL,
-                        )
-                        cv2.resizeWindow(
-                            "Reconhecimento Facial", self.width, self.height
-                        )
-                        print("📺 Modo janela ativado")
-
-            except Exception as e:
-                logging.error(f"Erro no loop principal: {str(e)}")
-                time.sleep(0.1)
-
-        self.cleanup()
-
-    def reconnect_camera(self):
-        """Tenta reconectar a câmera"""
+    def create_display_window(self):
+        """Cria janela de exibição otimizada"""
         try:
-            self.cleanup()
-            time.sleep(1)
-
-            # Recria os objetos
-            self.camera_manager = CameraManager(
-                self.rtsp_url, self.width, self.height, self.target_fps
-            )
-            self.face_processor = FaceProcessor(threshold=0.75)
-
-            if self.initialize_system():
-                print("✅ Reconexão bem-sucedida!")
-                logging.info("Reconexão bem-sucedida!")
-            else:
-                print("⚠️  Falha na reconexão")
-                logging.warning("Falha na reconexão")
-
+            cv2.namedWindow("Sistema de Catraca", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("Sistema de Catraca", 800, 600)
+            self.window_created = True
+            return True
         except Exception as e:
-            logging.error(f"Erro na reconexão: {str(e)}")
+            logging.warning(f"Janela não criada: {str(e)}")
+            return False
+
+    def handle_keypress(self, key):
+        """Manipulação otimizada de teclas"""
+        if key == ord("q") or key == ord("Q"):
+            logging.info("Solicitação de saída pelo usuário")
+            return False
+        elif key == ord("r") or key == ord("R"):
+            logging.info("Recarregando modelo...")
+            self.face_processor.load_model()
+        return True
+
+    def draw_status_overlay(self, frame, fps, status):
+        """Overlay otimizado de status"""
+        try:
+            h, w = frame.shape[:2]
+
+            # Fundo semi-transparente
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (0, 0), (w, 60), (0, 0, 0), -1)
+            cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+
+            # Status do sistema
+            color = (0, 255, 0) if status == "OPERACIONAL" else (0, 0, 255)
+            cv2.putText(
+                frame,
+                f"SISTEMA: {status}",
+                (10, 25),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                color,
+                2,
+            )
+
+            # FPS
+            cv2.putText(
+                frame,
+                f"FPS: {fps:.1f}",
+                (10, 50),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255, 255, 255),
+                1,
+            )
+
+            # Instruções
+            cv2.putText(
+                frame,
+                "Q - Sair | R - Recarregar Modelo",
+                (w - 300, 25),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (200, 200, 200),
+                1,
+            )
+
+            return frame
+        except Exception as e:
+            logging.debug(f"Erro no overlay: {str(e)}")
+            return frame
+
+    def run(self):
+        """Loop principal otimizado para catraca"""
+        try:
+            if not self.initialize_system():
+                logging.error("Falha na inicialização do sistema")
+                return
+
+            self.create_display_window()
+            self.running = True
+
+            logging.info("Sistema de catraca iniciado")
+            fps_counter = 0
+            fps_time = time.time()
+            last_frame_time = time.time()
+
+            while self.running:
+                try:
+                    # Controle de FPS
+                    current_time = time.time()
+                    elapsed = current_time - last_frame_time
+                    if elapsed < 1.0 / self.target_fps:
+                        time.sleep(0.001)  # Pequena pausa para controle de FPS
+                        continue
+
+                    last_frame_time = current_time
+
+                    # Captura frame
+                    frame = self.camera_manager.get_frame()
+                    if frame is None:
+                        logging.warning("Frame vazio recebido")
+                        time.sleep(0.1)
+                        continue
+
+                    # Verifica se a câmera está tampada
+                    if self.face_processor.is_camera_covered(frame):
+                        cv2.putText(
+                            frame,
+                            "CAMERA TAMPADA/ESCURA",
+                            (50, 50),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            1,
+                            (0, 0, 255),
+                            2,
+                        )
+                    else:
+                        # Processamento otimizado do frame
+                        frame = self.face_processor.process_frame(frame)
+
+                    # Cálculo de FPS
+                    fps_counter += 1
+                    if current_time - fps_time >= 1.0:
+                        fps = fps_counter / (current_time - fps_time)
+                        fps_counter = 0
+                        fps_time = current_time
+                    else:
+                        fps = 1.0 / elapsed if elapsed > 0 else 0
+
+                    # Status do sistema
+                    status = (
+                        "OPERACIONAL"
+                        if self.face_processor.model_loaded
+                        else "SEM TREINAMENTO"
+                    )
+
+                    # Overlay de status
+                    frame = self.draw_status_overlay(frame, fps, status)
+
+                    # Exibe frame
+                    cv2.imshow("Sistema de Catraca", frame)
+
+                    # Controle de teclas (otimizado)
+                    key = cv2.waitKey(1) & 0xFF
+                    if not self.handle_keypress(key):
+                        break
+
+                except Exception as e:
+                    logging.error(f"Erro no loop principal: {str(e)}")
+                    time.sleep(0.1)  # Previne loop infinito de erro
+
+        except KeyboardInterrupt:
+            logging.info("Interrupção pelo usuário")
+        except Exception as e:
+            logging.error(f"Erro crítico: {str(e)}")
+        finally:
+            self.cleanup()
 
     def cleanup(self):
-        """Limpeza de recursos"""
-        self.running = False
-
-        # Limpa câmera
-        self.camera_manager.cleanup()
-
-        # Limpa processador facial
-        self.face_processor.cleanup()
-
-        # Fecha janelas
+        """Limpeza otimizada de recursos"""
         try:
+            self.running = False
+            if hasattr(self, "camera_manager"):
+                self.camera_manager.cleanup()
+            if hasattr(self, "face_processor"):
+                self.face_processor.cleanup()
             if self.window_created:
                 cv2.destroyAllWindows()
-                self.window_created = False
+            logging.info("Sistema finalizado corretamente")
         except Exception as e:
-            logging.error(f"Erro ao fechar janelas: {str(e)}")
-
-        print("=" * 60)
-        print("🛑 SISTEMA DE RECONHECIMENTO ENCERRADO")
-        print("✅ Recursos liberados com segurança")
-        print("=" * 60)
-        logging.info("Sistema finalizado com segurança")
+            logging.error(f"Erro na limpeza: {str(e)}")
 
 
 if __name__ == "__main__":
     try:
+        print("=" * 60)
+        print("🚀 SISTEMA DE CATRACA FACIAL - INICIANDO")
+        print("=" * 60)
+        print("Configurações otimizadas para:")
+        print("  ✓ Baixo número de imagens (1-5 por pessoa)")
+        print("  ✓ Velocidade de resposta")
+        print("  ✓ Confiabilidade em ambiente de catraca")
+        print("=" * 60)
+
         recognizer = FaceRecognizer()
         recognizer.run()
-    except KeyboardInterrupt:
-        print("\n\n🛑 Interrompido pelo usuário (Ctrl+C)")
-        print("✅ Sistema encerrado com segurança")
+
     except Exception as e:
-        print(f"\n❌ ERRO FATAL: {str(e)}")
-        logging.error(f"ERRO FATAL: {str(e)}")
+        print(f"❌ ERRO INICIAL: {str(e)}")
+        import traceback
+
+        traceback.print_exc()
     finally:
-        try:
-            cv2.destroyAllWindows()
-        except:
-            pass
+        print("=" * 60)
+        print("👋 SISTEMA FINALIZADO")
+        print("=" * 60)

@@ -1,3 +1,4 @@
+# train_model.py - ATUALIZADO
 import os
 import cv2
 import numpy as np
@@ -9,16 +10,18 @@ import logging
 import sys
 import json
 from datetime import datetime
+from sklearn.preprocessing import Normalizer
+import tensorflow as tf
 
 
 class DeepFaceTrainer:
     def __init__(self):
         self.MIN_IMAGES_PER_USER = 1
-        self.MAX_IMAGES_PER_USER = 20
+        self.MAX_IMAGES_PER_USER = 5  # Reduzido para refletir a realidade
         self.IMAGE_SIZE = (160, 160)
-        self.MIN_FACE_SIZE = 50
-        self.EMBEDDING_MODEL = "Facenet512"
-        self.DETECTORS = ["opencv", "ssd", "retinaface", "mtcnn"]
+        self.MIN_FACE_SIZE = 80
+        self.EMBEDDING_MODEL = "Facenet512"  # Mantido por ser um dos melhores
+        self.DETECTOR = "mtcnn"  # mais estável
         self.THRESHOLD_BLUR = 25
         self.ENFORCE_DETECTION = False
 
@@ -31,6 +34,10 @@ class DeepFaceTrainer:
 
         os.makedirs(self.MODEL_DIR, exist_ok=True)
         os.makedirs(self.REPORTS_DIR, exist_ok=True)
+
+        # Otimizações do TensorFlow
+        tf.config.threading.set_intra_op_parallelism_threads(2)
+        tf.config.threading.set_inter_op_parallelism_threads(2)
 
         logging.basicConfig(
             level=logging.INFO,
@@ -60,6 +67,9 @@ class DeepFaceTrainer:
             "valid_images": 0,
             "failed_images": 0,
         }
+
+        # Normalizador para embeddings
+        self.normalizer = Normalizer(norm="l2")
 
     def create_connection(self):
         try:
@@ -114,11 +124,49 @@ class DeepFaceTrainer:
             img = cv2.imread(img_path)
             if img is None:
                 return False, "Não foi possível ler a imagem"
-            if img.shape[0] < 30 or img.shape[1] < 30:
+
+            # Verifica tamanho mínimo
+            if img.shape[0] < self.MIN_FACE_SIZE or img.shape[1] < self.MIN_FACE_SIZE:
                 return False, "Imagem muito pequena"
+
+            # Verifica se a imagem está muito escura
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            if np.mean(gray) < 15:
+                return False, "Imagem muito escura"
+
             return True, "OK"
         except Exception as e:
             return False, f"Erro na validação: {str(e)}"
+
+    def augment_image(self, img):
+        """Aumento de dados para melhorar reconhecimento com poucas imagens"""
+        augmented = []
+
+        try:
+            # Imagem original
+            augmented.append(img)
+
+            # Flip horizontal
+            augmented.append(cv2.flip(img, 1))
+
+            # Pequenas rotações
+            rows, cols = img.shape[:2]
+            for angle in [-5, 5]:
+                M = cv2.getRotationMatrix2D((cols / 2, rows / 2), angle, 1)
+                rotated = cv2.warpAffine(img, M, (cols, rows))
+                augmented.append(rotated)
+
+            # Pequeno zoom
+            scale = 1.1
+            M = cv2.getRotationMatrix2D((cols / 2, rows / 2), 0, scale)
+            zoomed = cv2.warpAffine(img, M, (cols, rows))
+            augmented.append(zoomed)
+
+        except Exception as e:
+            logging.debug(f"Aumento de dados parcialmente falhou: {str(e)}")
+            augmented = [img]  # Fallback para imagem original
+
+        return augmented
 
     def generate_embedding(self, img_path):
         try:
@@ -135,34 +183,27 @@ class DeepFaceTrainer:
                 logging.warning(f"Imagem inválida: {msg}")
                 return None
 
-            # Tenta diferentes detectores
-            for detector in self.DETECTORS:
-                try:
-                    embedding_objs = DeepFace.represent(
-                        img_path=full_path,
-                        model_name=self.EMBEDDING_MODEL,
-                        detector_backend=detector,
-                        enforce_detection=self.ENFORCE_DETECTION,
-                        align=True,
-                        normalization="base",
-                    )
+            # Usa detector mais preciso para treinamento
+            try:
+                embedding_objs = DeepFace.represent(
+                    img_path=full_path,
+                    model_name=self.EMBEDDING_MODEL,
+                    detector_backend=self.DETECTOR,
+                    enforce_detection=self.ENFORCE_DETECTION,
+                    align=True,
+                    normalization="base",
+                )
 
-                    if embedding_objs and len(embedding_objs) > 0:
-                        embedding = np.array(embedding_objs[0]["embedding"]).flatten()
-                        norm = np.linalg.norm(embedding)
-                        if norm > 0:
-                            embedding = embedding / norm
-                            logging.info(f"✓ Embedding gerado com {detector}")
-                            return embedding
+                if embedding_objs and len(embedding_objs) > 0:
+                    embedding = np.array(embedding_objs[0]["embedding"]).flatten()
+                    # Normalização L2 consistente
+                    embedding = self.normalizer.transform([embedding])[0]
+                    logging.info("✓ Embedding gerado")
+                    return embedding
 
-                except Exception as e:
-                    logging.debug(f"Detector {detector} falhou: {str(e)}")
-                    continue
-
-            logging.warning(
-                f"Todos os detectores falharam para: {os.path.basename(full_path)}"
-            )
-            return None
+            except Exception as e:
+                logging.warning(f"Detector {self.DETECTOR} falhou: {str(e)}")
+                return None
 
         except Exception as e:
             logging.error(f"Erro ao processar {img_path}: {str(e)}")
@@ -181,43 +222,51 @@ class DeepFaceTrainer:
             embedding = self.generate_embedding(img_path)
 
             if embedding is not None:
+                # Adiciona embedding original
                 embeddings.append(embedding)
                 self.training_stats["valid_images"] += 1
                 logging.info(f"✓ Imagem {i+1}: Embedding gerado")
 
-                # Adiciona uma variação com flip horizontal
-                try:
-                    full_path = os.path.join(
-                        self.UPLOADS_DIR, img_path.replace("\\", "/")
-                    )
-                    img = cv2.imread(full_path)
-                    if img is not None:
-                        flipped_img = cv2.flip(img, 1)
-                        # Salva temporariamente a imagem flipada
-                        temp_path = "/tmp/flipped_temp.jpg"
-                        cv2.imwrite(temp_path, flipped_img)
+                # Aumento de dados para imagens únicas
+                if len(user_data["images"]) == 1:  # Apenas para casos de 1 imagem
+                    try:
+                        full_path = os.path.join(
+                            self.UPLOADS_DIR, img_path.replace("\\", "/")
+                        )
+                        img = cv2.imread(full_path)
+                        if img is not None:
+                            augmented_images = self.augment_image(img)
 
-                        flipped_embedding = self.generate_embedding(temp_path)
-                        if flipped_embedding is not None:
-                            embeddings.append(flipped_embedding)
-                            self.training_stats["valid_images"] += 1
-                            logging.info(f"✓ Imagem {i+1}: Embedding com flip gerado")
+                            # Gera embeddings para imagens aumentadas
+                            for j, aug_img in enumerate(
+                                augmented_images[1:], 1
+                            ):  # Pula a original
+                                temp_path = (
+                                    f"/tmp/aug_{j}_{os.path.basename(full_path)}"
+                                )
+                                cv2.imwrite(temp_path, aug_img)
 
-                        # Remove arquivo temporário
-                        if os.path.exists(temp_path):
-                            os.remove(temp_path)
-                except Exception as e:
-                    logging.debug(f"Flip falhou para imagem {i+1}: {str(e)}")
+                                aug_embedding = self.generate_embedding(temp_path)
+                                if aug_embedding is not None:
+                                    embeddings.append(aug_embedding)
+                                    self.training_stats["valid_images"] += 1
+                                    logging.info(
+                                        f"✓ Imagem {i+1}: Embedding aumentado {j} gerado"
+                                    )
+
+                                # Remove arquivo temporário
+                                if os.path.exists(temp_path):
+                                    os.remove(temp_path)
+                    except Exception as e:
+                        logging.debug(f"Aumento de dados falhou: {str(e)}")
             else:
                 self.training_stats["failed_images"] += 1
                 logging.warning(f"✗ Imagem {i+1}: Falha")
 
         if embeddings:
-            # Calcula embedding médio
+            # Calcula embedding médio normalizado
             avg_embedding = np.mean(embeddings, axis=0)
-            norm_avg = np.linalg.norm(avg_embedding)
-            if norm_avg > 0:
-                avg_embedding = avg_embedding / norm_avg
+            avg_embedding = self.normalizer.transform([avg_embedding])[0]
 
             logging.info(f"✓ {user_name}: {len(embeddings)} embeddings gerados")
 
@@ -226,6 +275,7 @@ class DeepFaceTrainer:
                 "sobrenome": user_data["sobrenome"],
                 "embeddings": [e.tolist() for e in embeddings],
                 "embedding": avg_embedding.tolist(),
+                "embedding_count": len(embeddings),  # Para debug
             }
         else:
             logging.warning(f"✗ {user_name}: Nenhum embedding válido")
@@ -244,9 +294,11 @@ class DeepFaceTrainer:
             "reverse_label_map": self.reverse_label_map,
             "training_stats": self.training_stats,
             "model_info": {
-                "version": "3.0",
+                "version": "4.0",  # Atualizado
                 "training_date": datetime.now().isoformat(),
                 "embedding_model": self.EMBEDDING_MODEL,
+                "detector": self.DETECTOR,
+                "normalization": "l2",
             },
         }
 
@@ -313,7 +365,7 @@ class DeepFaceTrainer:
 
     def train(self):
         self.training_stats["start_time"] = datetime.now()
-        logging.info("\n=== INICIANDO TREINAMENTO ===")
+        logging.info("\n=== INICIANDO TREINAMENTO OTIMIZADO PARA POUCAS IMAGENS ===")
 
         if not os.path.exists(self.UPLOADS_DIR) or not os.listdir(self.UPLOADS_DIR):
             logging.error("Pasta uploads não encontrada ou vazia")
@@ -355,7 +407,7 @@ class DeepFaceTrainer:
         ).total_seconds()
 
         print("\n" + "=" * 60)
-        print("📊 RESUMO DO TREINAMENTO")
+        print("📊 RESUMO DO TREINAMENTO OTIMIZADO")
         print("=" * 60)
         print(f"   ⏰ Tempo total: {total_time:.1f} segundos")
         print(
@@ -374,13 +426,15 @@ class DeepFaceTrainer:
         print("=" * 60)
 
         for user_id, data in self.embeddings_db.items():
-            print(f"   ✅ {data['nome']}: {len(data['embeddings'])} embeddings")
+            print(
+                f"   ✅ {data['nome']}: {data['embedding_count']} embeddings (com aumento)"
+            )
 
 
 if __name__ == "__main__":
     try:
         print("=" * 60)
-        print("🤖 INICIANDO TREINAMENTO FACIAL")
+        print("🤖 INICIANDO TREINAMENTO FACIAL OTIMIZADO")
         print("=" * 60)
 
         trainer = DeepFaceTrainer()

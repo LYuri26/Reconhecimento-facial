@@ -1,3 +1,4 @@
+# face_processor.py - ATUALIZADO
 import cv2
 import numpy as np
 import pickle
@@ -7,24 +8,28 @@ import time
 from deepface import DeepFace
 from mysql.connector import Error
 import mysql.connector
+from sklearn.preprocessing import Normalizer
 
 
 class FaceProcessor:
-    def __init__(
-        self, model_path="model/deepface_model.pkl", threshold=0.5
-    ):  # Threshold reduzido
+    def __init__(self, model_path="model/deepface_model.pkl", threshold=0.65):
         self.MODEL_PATH = model_path
-        self.THRESHOLD = threshold  # Threshold mais baixo para Facenet512
+        self.THRESHOLD = threshold  # Otimizado para Facenet512
         self.EMBEDDING_MODEL = "Facenet512"
-        self.DETECTOR = "opencv"
+        self.DETECTOR = "opencv"  # Mais rápido para reconhecimento
         self.model_loaded = False
         self.embeddings_db = {}
         self.db_connection = None
 
+        # Normalizador consistente com treinamento
+        self.normalizer = Normalizer(norm="l2")
+
         # Otimizações de performance
         self.last_processed_time = 0
-        self.processing_interval = 0.3  # Aumentei o intervalo para melhor qualidade
+        self.processing_interval = 0.2  # Balance entre velocidade e precisão
         self.min_face_size = 80
+        self.face_cache = {}  # Cache de embeddings para performance
+        self.cache_timeout = 30  # segundos
 
         # Carrega o modelo na inicialização
         self.load_model()
@@ -46,11 +51,12 @@ class FaceProcessor:
 
             logging.info(f"✅ Modelo carregado com {len(self.embeddings_db)} pessoas")
 
-            # Log detalhado das pessoas carregadas
+            # Pré-calcula embeddings normalizados
             for user_id, data in self.embeddings_db.items():
-                logging.info(
-                    f"   👤 {data['nome']} - Embeddings: {len(data.get('embeddings', []))}"
-                )
+                if "embedding" in data:
+                    data["normalized_embedding"] = self.normalizer.transform(
+                        [np.array(data["embedding"])]
+                    )[0]
 
             self.model_loaded = True
             return True
@@ -79,16 +85,16 @@ class FaceProcessor:
             return False
 
     def calculate_similarity(self, emb1, emb2):
-        """Calcula similaridade cosseno corretamente"""
+        """Calcula similaridade cosseno otimizada"""
         try:
             if emb1 is None or emb2 is None:
                 return 0.0
 
-            # Converte para arrays numpy
+            # Garante que são arrays numpy
             emb1 = np.array(emb1, dtype=np.float32).flatten()
             emb2 = np.array(emb2, dtype=np.float32).flatten()
 
-            # Verifica se os embeddings são válidos
+            # Verifica validade
             if (
                 emb1.size == 0
                 or emb2.size == 0
@@ -99,20 +105,11 @@ class FaceProcessor:
             ):
                 return 0.0
 
-            # Normalização L2 (igual ao treinamento)
-            norm1 = np.linalg.norm(emb1)
-            norm2 = np.linalg.norm(emb2)
+            # Similaridade cosseno otimizada
+            similarity = np.dot(emb1, emb2) / (
+                np.linalg.norm(emb1) * np.linalg.norm(emb2)
+            )
 
-            if norm1 == 0 or norm2 == 0:
-                return 0.0
-
-            emb1_normalized = emb1 / norm1
-            emb2_normalized = emb2 / norm2
-
-            # Similaridade cosseno (já entre 0-1 para Facenet512 normalizado)
-            similarity = np.dot(emb1_normalized, emb2_normalized)
-
-            logging.debug(f"Similaridade calculada: {similarity:.4f}")
             return float(np.clip(similarity, 0.0, 1.0))
 
         except Exception as e:
@@ -120,7 +117,7 @@ class FaceProcessor:
             return 0.0
 
     def safe_get_embedding(self, face_img):
-        """Gera embedding facial de forma consistente com o treinamento"""
+        """Gera embedding facial otimizado"""
         try:
             if not isinstance(face_img, np.ndarray) or face_img.size == 0:
                 return None
@@ -132,15 +129,27 @@ class FaceProcessor:
             ):
                 return None
 
-            # Salva temporariamente a imagem para processamento
+            # Cache key baseado na imagem
+            cache_key = hash(face_img.tobytes())
+            current_time = time.time()
+
+            # Verifica cache
+            if (
+                cache_key in self.face_cache
+                and current_time - self.face_cache[cache_key]["timestamp"]
+                < self.cache_timeout
+            ):
+                return self.face_cache[cache_key]["embedding"]
+
+            # Salva temporariamente
             temp_path = "/tmp/temp_face.jpg"
             cv2.imwrite(temp_path, face_img)
 
-            # Usa o MESMO método do treinamento
+            # Gera embedding
             embedding_objs = DeepFace.represent(
                 img_path=temp_path,
                 model_name=self.EMBEDDING_MODEL,
-                detector_backend="opencv",  # Usa opencv para consistência
+                detector_backend=self.DETECTOR,
                 enforce_detection=False,
                 align=True,
                 normalization="base",
@@ -155,36 +164,65 @@ class FaceProcessor:
 
             embedding = np.array(embedding_objs[0]["embedding"], dtype=np.float32)
 
-            # Normalização igual ao treinamento
-            norm = np.linalg.norm(embedding)
-            if norm == 0:
-                return None
+            # Normalização consistente
+            embedding = self.normalizer.transform([embedding])[0]
 
-            embedding = embedding / norm
+            # Atualiza cache
+            self.face_cache[cache_key] = {
+                "embedding": embedding,
+                "timestamp": current_time,
+            }
+
+            # Limpa cache antigo
+            self.clean_old_cache()
+
             return embedding
 
         except Exception as e:
             logging.debug(f"Erro na geração de embedding: {str(e)}")
             return None
 
+    def clean_old_cache(self):
+        """Limpa cache antigo"""
+        current_time = time.time()
+        keys_to_remove = [
+            key
+            for key, value in self.face_cache.items()
+            if current_time - value["timestamp"] > self.cache_timeout
+        ]
+        for key in keys_to_remove:
+            del self.face_cache[key]
+
     def detect_faces_fast(self, frame):
-        """Detecção de faces otimizada"""
+        """Detecção de faces otimizada para catraca"""
         try:
-            # Usa detector Haar Cascade para maior velocidade
+            # Usa detector mais rápido para ambiente controlado
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+            # Equaliza histograma para melhor detecção
+            gray = cv2.equalizeHist(gray)
+
             face_cascade = cv2.CascadeClassifier(
                 cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
             )
 
             faces = face_cascade.detectMultiScale(
                 gray,
-                scaleFactor=1.1,
-                minNeighbors=5,
+                scaleFactor=1.05,  # Mais rápido
+                minNeighbors=3,  # Menos rigoroso
                 minSize=(self.min_face_size, self.min_face_size),
+                flags=cv2.CASCADE_SCALE_IMAGE,
             )
 
             detected_faces = []
             for x, y, w, h in faces:
+                # Expande um pouco a região da face
+                expand = 10
+                x = max(0, x - expand)
+                y = max(0, y - expand)
+                w = min(frame.shape[1] - x, w + 2 * expand)
+                h = min(frame.shape[0] - y, h + 2 * expand)
+
                 detected_faces.append({"x": x, "y": y, "w": w, "h": h})
 
             return detected_faces
@@ -194,7 +232,7 @@ class FaceProcessor:
             return []
 
     def recognize_face(self, live_embedding):
-        """Reconhece uma face baseada no embedding"""
+        """Reconhecimento otimizado para poucas imagens"""
         try:
             if not self.model_loaded or not self.embeddings_db:
                 return None, 0.0
@@ -203,32 +241,36 @@ class FaceProcessor:
             best_similarity = 0.0
 
             for user_id, user_data in self.embeddings_db.items():
-                # Usa o embedding médio (principal) para comparação
-                known_embedding = user_data.get("embedding")
+                # Usa embedding normalizado pré-calculado
+                known_embedding = user_data.get(
+                    "normalized_embedding", user_data.get("embedding")
+                )
 
                 if known_embedding is None:
                     continue
 
                 similarity = self.calculate_similarity(live_embedding, known_embedding)
 
-                logging.info(
-                    f"Comparando: {user_data['nome']} - Similaridade: {similarity:.4f}"
-                )
-
                 if similarity > best_similarity:
                     best_similarity = similarity
                     best_match = user_id
 
-            # Verifica se atingiu o threshold
-            if best_match and best_similarity >= self.THRESHOLD:
+            # Threshold adaptativo baseado na qualidade
+            adaptive_threshold = self.THRESHOLD
+            if best_similarity > 0.8:  # Confiança muito alta
+                adaptive_threshold = max(self.THRESHOLD - 0.05, 0.5)
+            elif best_similarity < 0.4:  # Confiança muito baixa
+                adaptive_threshold = min(self.THRESHOLD + 0.05, 0.8)
+
+            if best_match and best_similarity >= adaptive_threshold:
                 logging.info(
                     f"✅ MATCH: {best_match} - Similaridade: {best_similarity:.4f}"
                 )
                 return best_match, best_similarity
             else:
                 if best_match:
-                    logging.info(
-                        f"❌ Threshold não atingido: {best_similarity:.4f} < {self.THRESHOLD}"
+                    logging.debug(
+                        f"❌ Threshold não atingido: {best_similarity:.4f} < {adaptive_threshold}"
                     )
                 return None, best_similarity
 
@@ -237,7 +279,7 @@ class FaceProcessor:
             return None, 0.0
 
     def process_frame(self, frame):
-        """Processa um frame para reconhecimento facial"""
+        """Processamento otimizado para catraca"""
         try:
             if frame is None or frame.size == 0:
                 return frame
@@ -245,7 +287,7 @@ class FaceProcessor:
             display_frame = frame.copy()
             current_time = time.time()
 
-            # Limita a taxa de processamento
+            # Limita taxa de processamento
             if current_time - self.last_processed_time < self.processing_interval:
                 return display_frame
 
@@ -272,7 +314,7 @@ class FaceProcessor:
             for face in faces:
                 x, y, w, h = face["x"], face["y"], face["w"], face["h"]
 
-                # Extrai a região do rosto
+                # Extrai região do rosto
                 face_region = frame[y : y + h, x : x + w]
                 if face_region.size == 0:
                     continue
@@ -281,7 +323,7 @@ class FaceProcessor:
                 live_emb = self.safe_get_embedding(face_region)
                 if live_emb is None:
                     label = "Analisando..."
-                    color = (0, 255, 255)
+                    color = (0, 255, 255)  # Amarelo
                 else:
                     # Reconhece a face
                     user_id, similarity = self.recognize_face(live_emb)
@@ -289,26 +331,41 @@ class FaceProcessor:
                     if user_id:
                         user_info = self.get_user_info(user_id)
                         label = f"{user_info['nome']} ({similarity:.3f})"
-                        color = (0, 255, 0)  # Verde para reconhecido
-                    else:
-                        label = (
-                            f"Não identificado ({similarity:.3f})"
-                            if similarity > 0
-                            else "Não identificado"
+                        color = (0, 255, 0)  # Verde
+
+                        # Adiciona confiança visual
+                        confidence_width = int(w * similarity)
+                        cv2.rectangle(
+                            display_frame,
+                            (x, y + h + 5),
+                            (x + confidence_width, y + h + 10),
+                            color,
+                            -1,
                         )
-                        color = (0, 0, 255)  # Vermelho para não reconhecido
+                    else:
+                        label = f"Não identificado ({similarity:.3f})"
+                        color = (0, 0, 255)  # Vermelho
 
                 # Desenha retângulo e label
                 cv2.rectangle(display_frame, (x, y), (x + w, y + h), color, 2)
-                text_y = max(y - 10, 20)
+
+                # Fundo para texto
+                text_bg_y = max(y - 25, 0)
+                cv2.rectangle(
+                    display_frame, (x, text_bg_y), (x + len(label) * 10, y), color, -1
+                )
+                cv2.rectangle(
+                    display_frame, (x, text_bg_y), (x + len(label) * 10, y), color, 2
+                )
+
                 cv2.putText(
                     display_frame,
                     label,
-                    (x, text_y),
+                    (x + 5, y - 8),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    color,
-                    2,
+                    0.5,
+                    (255, 255, 255),  # Texto branco
+                    1,
                 )
 
             return display_frame
@@ -346,7 +403,8 @@ class FaceProcessor:
             mean_intensity = np.mean(gray)
             std_intensity = np.std(gray)
 
-            camera_covered = mean_intensity < 30 or std_intensity < 15
+            # Thresholds mais tolerantes para ambiente de catraca
+            camera_covered = mean_intensity < 25 or std_intensity < 10
             return camera_covered
 
         except Exception as e:
@@ -361,4 +419,5 @@ class FaceProcessor:
             except Exception as e:
                 logging.error(f"Erro ao fechar conexão com o banco: {str(e)}")
 
+        self.face_cache.clear()
         logging.info("Processador facial finalizado")
