@@ -233,6 +233,7 @@ function executarComandoTempoReal($pythonCommand, $scriptPath, $acao, $projectRo
             'instalando_dependencias' => 40,
             'processando_imagens' => 60,
             'gerando_embeddings' => 80,
+            'iniciando_reconhecimento' => 90, // NOVO ESTÁGIO
             'salvando_modelo' => 95,
             'concluido' => 100
         ];
@@ -271,17 +272,32 @@ function executarComandoTempoReal($pythonCommand, $scriptPath, $acao, $projectRo
 
                     if (strpos($lowerOutput, 'criando ambiente virtual') !== false) {
                         $currentStage = 'criando_venv';
-                    } elseif (strpos($lowerOutput, 'instalando dependências') !== false) {
+                    } elseif (
+                        strpos($lowerOutput, 'instalando dependências') !== false ||
+                        strpos($lowerOutput, 'instalando dependencias') !== false
+                    ) {
                         $currentStage = 'instalando_dependencias';
-                    } elseif (strpos($lowerOutput, 'processando imagem') !== false) {
+                    } elseif (
+                        strpos($lowerOutput, 'processando imagem') !== false ||
+                        strpos($lowerOutput, 'processando imagens') !== false
+                    ) {
                         $currentStage = 'processando_imagens';
-                    } elseif (strpos($lowerOutput, 'gerando embedding') !== false) {
+                    } elseif (
+                        strpos($lowerOutput, 'gerando embedding') !== false ||
+                        strpos($lowerOutput, 'gerando embeddings') !== false
+                    ) {
                         $currentStage = 'gerando_embeddings';
+                    } elseif (
+                        strpos($lowerOutput, 'iniciando reconhecimento facial') !== false ||
+                        strpos($lowerOutput, 'iniciando reconhecimento') !== false
+                    ) {
+                        $currentStage = 'iniciando_reconhecimento'; // NOVO ESTÁGIO
                     } elseif (strpos($lowerOutput, 'salvando modelo') !== false) {
                         $currentStage = 'salvando_modelo';
                     } elseif (
                         strpos($lowerOutput, 'concluído') !== false ||
-                        strpos($lowerOutput, 'sucesso') !== false
+                        strpos($lowerOutput, 'sucesso') !== false ||
+                        strpos($lowerOutput, 'finalizado') !== false
                     ) {
                         $currentStage = 'concluido';
                     }

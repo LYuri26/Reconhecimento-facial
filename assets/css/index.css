@@ -1,14 +1,33 @@
-/* Estilos específicos para a página inicial (index.html) */
-
-/* Layout principal */
-body {
-  background-color: #f8f9fa;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
+/* =========================
+   Variáveis de cores
+   ========================= */
+:root {
+  --primary-color: #4361ee;
+  --secondary-color: #6c757d;
+  --success-color: #06d6a0;
+  --danger-color: #ef476f;
+  --warning-color: #ffd166;
+  --info-color: #0dcaf0;
+  --dark-color: #1a1a2e;
+  --light-color: #f8f9fa;
 }
 
-/* Navbar personalizada */
+/* =========================
+   Reset e Layout principal
+   ========================= */
+body {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  min-height: 100vh;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+}
+
+/* =========================
+   Navbar
+   ========================= */
 .navbar-brand {
   font-weight: 600;
   display: flex;
@@ -20,128 +39,141 @@ body {
   font-size: 1.2rem;
 }
 
-/* Container principal */
+/* =========================
+   Container principal
+   ========================= */
 .main-container {
   flex: 1;
   display: flex;
   align-items: center;
+  justify-content: center;
   padding: 2rem 0;
 }
 
-/* Card do menu */
+/* =========================
+   Cards
+   ========================= */
+.card,
 .menu-card {
   border: none;
   border-radius: 15px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
   overflow: hidden;
   transition: transform 0.3s ease, box-shadow 0.3s ease;
-  background-color: white;
+  backdrop-filter: blur(10px);
+  background: rgba(255, 255, 255, 0.95);
 }
 
-.menu-card:hover {
+.menu-card:hover,
+.card:hover {
   transform: translateY(-5px);
   box-shadow: 0 15px 35px rgba(0, 0, 0, 0.15);
 }
 
 .menu-card-header {
-  background: linear-gradient(135deg, #0d6efd 0%, #0b5ed7 100%);
+  background: linear-gradient(135deg, var(--primary-color) 0%, #0b5ed7 100%);
   padding: 1.5rem;
   color: white;
   text-align: center;
-}
-
-.menu-card-header h3 {
-  margin: 0;
   font-weight: 600;
 }
 
-/* Botões do menu */
+/* =========================
+   Botões
+   ========================= */
+.btn,
 .menu-btn {
-  padding: 1rem;
-  font-size: 1.1rem;
   border-radius: 10px;
+  font-weight: 600;
   transition: all 0.3s ease;
+  border: none;
+  padding: 12px 24px;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 0.75rem;
-  font-weight: 500;
-  border: none;
   text-align: center;
+  cursor: pointer;
 }
 
-.menu-btn i {
-  font-size: 1.3rem;
-}
-
+.btn-primary,
 .menu-btn-primary {
-  background-color: #0d6efd;
+  background: var(--primary-color);
   color: white;
 }
 
+.btn-primary:hover,
 .menu-btn-primary:hover {
   background-color: #0b5ed7;
   transform: translateY(-3px);
-  box-shadow: 0 5px 15px rgba(13, 110, 253, 0.3);
+  box-shadow: 0 5px 15px rgba(67, 97, 238, 0.3);
 }
 
+.btn-secondary,
 .menu-btn-secondary {
-  background-color: #6c757d;
+  background: var(--secondary-color);
   color: white;
 }
 
+.btn-secondary:hover,
 .menu-btn-secondary:hover {
   background-color: #5c636a;
   transform: translateY(-3px);
   box-shadow: 0 5px 15px rgba(108, 117, 125, 0.3);
 }
 
-.menu-btn-info {
-  background-color: #0dcaf0;
+.btn-success {
+  background: var(--success-color);
   color: white;
 }
 
-.menu-btn-info:hover {
-  background-color: #0aa2c0;
-  transform: translateY(-3px);
-  box-shadow: 0 5px 15px rgba(13, 202, 240, 0.3);
+.btn-danger {
+  background: var(--danger-color);
+  color: white;
 }
 
-/* Rodapé */
+.btn-info,
+.menu-btn-info {
+  background: var(--info-color);
+  color: white;
+}
+
+.btn:hover,
+.menu-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+}
+
+.menu-btn i,
+.btn i {
+  font-size: 1.3rem;
+}
+
+/* =========================
+   Rodapé
+   ========================= */
 .footer {
-  background-color: #f8f9fa;
+  background-color: var(--light-color);
   padding: 1rem 0;
   text-align: center;
   border-top: 1px solid #e9ecef;
   margin-top: auto;
 }
 
-/* Responsividade */
-@media (max-width: 768px) {
-  .main-container {
-    padding: 1.5rem 0;
-  }
-
-  .menu-btn {
-    padding: 0.85rem;
-    font-size: 1rem;
-  }
-
-  .menu-card-header {
-    padding: 1.25rem;
-  }
-}
-
+/* =========================
+   Console output
+   ========================= */
 .console-output {
-  font-family: "Courier New", monospace;
-  font-size: 12px;
-  height: 300px;
+  font-family: "Fira Code", "Courier New", monospace;
+  font-size: 13px;
+  height: 200px;
   overflow-y: auto;
-  background-color: #1a1a1a;
+  background: #1e1e1e;
   color: #00ff00;
   padding: 15px;
-  border-radius: 5px;
-  border: 1px solid #333;
+  border-radius: 10px;
+  border: 2px solid #333;
+  line-height: 1.4;
   white-space: pre-wrap;
   word-break: break-all;
 }
@@ -163,16 +195,179 @@ body {
   background: #777;
 }
 
-/* Animações para texto em tempo real */
 .console-output .new-line {
   animation: fadeIn 0.3s ease-in;
 }
 
+.console-output .text-muted {
+  color: #6c757d !important;
+}
+
+.console-output .text-success {
+  color: #28a745 !important;
+  font-weight: bold;
+}
+
+.console-output .text-danger {
+  color: #dc3545 !important;
+  font-weight: bold;
+}
+
+/* =========================
+   Progress bar
+   ========================= */
+.progress {
+  height: 20px;
+  border-radius: 10px;
+  background: #e9ecef;
+  overflow: hidden;
+}
+
+.progress-bar {
+  border-radius: 10px;
+  transition: width 0.6s ease;
+}
+
+/* =========================
+   Status indicators
+   ========================= */
+.status-indicator {
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-weight: 600;
+  background: var(--danger-color);
+  color: white;
+}
+
+.status-indicator.active {
+  background: var(--success-color);
+}
+
+.status-indicator i {
+  margin-right: 5px;
+}
+
+/* =========================
+   Modal
+   ========================= */
+.modal-content {
+  border-radius: 15px;
+  border: none;
+}
+
+.modal-header {
+  background: var(--primary-color);
+  color: white;
+  border-radius: 15px 15px 0 0;
+}
+
+/* =========================
+   Alertas/Notificações
+   ========================= */
+.alert {
+  border-radius: 10px;
+  border: none;
+  font-weight: 600;
+}
+
+.alert-success {
+  background: var(--success-color);
+  color: white;
+}
+
+.alert-error {
+  background: var(--danger-color);
+  color: white;
+}
+
+.alert-warning {
+  background: var(--warning-color);
+  color: #000;
+}
+
+/* =========================
+   Formulários
+   ========================= */
+.form-control {
+  border-radius: 10px;
+  border: 2px solid #e9ecef;
+  padding: 12px 15px;
+  transition: all 0.3s ease;
+}
+
+.form-control:focus {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 0.2rem rgba(67, 97, 238, 0.25);
+}
+
+/* =========================
+   Preview de imagens
+   ========================= */
+.image-preview {
+  position: relative;
+  margin-bottom: 15px;
+}
+
+.image-preview img {
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 2px solid #ddd;
+}
+
+.remove-btn {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 25px;
+  height: 25px;
+  border-radius: 50%;
+  background: var(--danger-color);
+  color: white;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+/* =========================
+   Animações
+   ========================= */
 @keyframes fadeIn {
   from {
     opacity: 0;
+    transform: translateY(20px);
   }
   to {
     opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.5s ease;
+}
+
+/* =========================
+   Responsividade
+   ========================= */
+@media (max-width: 768px) {
+  .main-container {
+    padding: 1.5rem 0;
+  }
+
+  .btn,
+  .menu-btn {
+    padding: 10px 20px;
+    font-size: 14px;
+  }
+
+  .menu-card-header {
+    padding: 1.25rem;
+  }
+
+  .console-output {
+    height: 150px;
+    font-size: 12px;
   }
 }

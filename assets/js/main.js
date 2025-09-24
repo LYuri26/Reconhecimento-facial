@@ -1,4 +1,4 @@
-// assets/js/main.js
+// assets/js/main.js - ATUALIZADO (SEM CONTROLE DE CÂMERA ATIVA)
 
 document.addEventListener("DOMContentLoaded", function () {
   // Verificar se os botões existem antes de adicionar event listeners
@@ -30,13 +30,11 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 
-  // Inicializar estado dos botões - COMEÇAM HABILITADOS
+  // Inicializar estado dos botões
   atualizarEstadoBotoes(true);
 });
 
-// Variável global para controlar o estado das câmeras
-let camerasAtivas = false;
-let intervaloMonitoramento = null;
+// Variável global para controlar o estado das câmeras (REMOVER CONTROLE)
 let eventSource = null;
 
 function executarScriptPython(acao) {
@@ -112,47 +110,35 @@ function iniciarConexaoTempoReal(
       console.error("Timeout na conexão SSE");
       eventSource.close();
       eventSource = null;
-      mostrarNotificacao("error", "Timeout de conexão com o servidor");
-      atualizarEstadoBotoes(true);
+      mostrarNotificacao(
+        "warning",
+        "Conexão está demorando mais que o normal..."
+      );
 
-      // Adicionar mensagem no console
       if (consoleOutput) {
         consoleOutput.innerHTML +=
-          "> ERRO: Timeout na conexão com o servidor\n";
+          "> AVISO: Aguardando resposta do servidor...\n";
         consoleOutput.scrollTop = consoleOutput.scrollHeight;
       }
     }
-  }, 30000); // 30 segundos
+  }, 30000);
 
   eventSource.onopen = function () {
     console.log("Conexão SSE estabelecida com sucesso");
     clearTimeout(connectionTimeout);
-
-    // Resetar timeout para 5 minutos após conexão estabelecida
-    connectionTimeout = setTimeout(() => {
-      if (eventSource && eventSource.readyState !== EventSource.CLOSED) {
-        console.error("Timeout após conexão estabelecida");
-        eventSource.close();
-        eventSource = null;
-        mostrarNotificacao("error", "Processo está demorando muito");
-
-        if (consoleOutput) {
-          consoleOutput.innerHTML += "> AVISO: Processo ainda em execução...\n";
-          consoleOutput.scrollTop = consoleOutput.scrollHeight;
-        }
-      }
-    }, 300000); // 5 minutos
   };
 
   eventSource.onmessage = function (event) {
     try {
-      clearTimeout(connectionTimeout); // Resetar timeout a cada mensagem
+      clearTimeout(connectionTimeout);
 
       const data = JSON.parse(event.data);
 
       // Verificar se há saída para o console
       if (data.output && consoleOutput) {
-        consoleOutput.innerHTML += data.output + "\n";
+        // Formatar melhor a saída
+        const timestamp = new Date().toLocaleTimeString();
+        consoleOutput.innerHTML += `<span class="text-muted">[${timestamp}]</span> ${data.output}\n`;
         consoleOutput.scrollTop = consoleOutput.scrollHeight;
       }
 
@@ -170,12 +156,10 @@ function iniciarConexaoTempoReal(
         console.error("Erro recebido:", data.error);
         if (feedbackMessage) {
           feedbackMessage.textContent = "Erro: " + data.error;
+          feedbackMessage.className = "text-danger";
         }
-        if (consoleOutput) {
-          consoleOutput.innerHTML += "> ERRO: " + data.error + "\n";
-          consoleOutput.scrollTop = consoleOutput.scrollHeight;
-        }
-        mostrarNotificacao("error", "Erro durante a execução: " + data.error);
+
+        mostrarNotificacao("error", "Erro durante a execução");
 
         // Re-habilitar botões em caso de erro
         atualizarEstadoBotoes(true);
@@ -204,11 +188,6 @@ function iniciarConexaoTempoReal(
       }
     } catch (e) {
       console.error("Erro ao processar evento SSE:", e);
-      // Tentar processar como texto simples se não for JSON
-      if (event.data && consoleOutput) {
-        consoleOutput.innerHTML += "> " + event.data + "\n";
-        consoleOutput.scrollTop = consoleOutput.scrollHeight;
-      }
     }
   };
 
@@ -216,61 +195,58 @@ function iniciarConexaoTempoReal(
     console.error("Erro na conexão SSE:", error);
     clearTimeout(connectionTimeout);
 
-    // Verificar estado da conexão
-    if (eventSource) {
-      console.log("Estado da conexão SSE:", eventSource.readyState);
-
-      // Só tratar como erro se a conexão foi fechada inesperadamente
-      if (eventSource.readyState === EventSource.CLOSED) {
-        // Tentar reconectar após 3 segundos se o modal ainda estiver aberto
-        setTimeout(() => {
-          const modalElement = document.getElementById("modalFeedback");
-          if (modalElement && modalElement.classList.contains("show")) {
-            console.log("Tentando reconexão automática...");
-
-            if (consoleOutput) {
-              consoleOutput.innerHTML += "> Reconectando com servidor...\n";
-              consoleOutput.scrollTop = consoleOutput.scrollHeight;
-            }
-
-            iniciarConexaoTempoReal(
-              acao,
-              progressBar,
-              feedbackMessage,
-              consoleOutput,
-              modal
-            );
-          }
-        }, 3000);
+    if (eventSource && eventSource.readyState === EventSource.CLOSED) {
+      // Não mostrar erro se foi fechado intencionalmente
+      if (!modal._element.classList.contains("show")) {
+        return;
       }
+
+      setTimeout(() => {
+        const modalElement = document.getElementById("modalFeedback");
+        if (modalElement && modalElement.classList.contains("show")) {
+          console.log("Tentando reconexão automática...");
+
+          if (consoleOutput) {
+            consoleOutput.innerHTML += "> Reconectando com servidor...\n";
+            consoleOutput.scrollTop = consoleOutput.scrollHeight;
+          }
+
+          iniciarConexaoTempoReal(
+            acao,
+            progressBar,
+            feedbackMessage,
+            consoleOutput,
+            modal
+          );
+        }
+      }, 3000);
     }
   };
 
   // Adicionar event listener para fechamento do modal
-  const modalElement = document.getElementById("modalFeedback");
-  if (modalElement) {
-    modalElement.addEventListener("hidden.bs.modal", function () {
-      // Fechar conexão SSE quando o modal for fechado
-      if (eventSource) {
-        eventSource.close();
-        eventSource = null;
-      }
-      clearTimeout(connectionTimeout);
-    });
-  }
+  modal._element.addEventListener("hidden.bs.modal", function () {
+    // Fechar conexão SSE quando o modal for fechado
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+    clearTimeout(connectionTimeout);
+
+    // Re-habilitar botões quando o modal for fechado
+    atualizarEstadoBotoes(true);
+  });
 }
 
 function getStageMessage(stage) {
   const stageMessages = {
     iniciando: "Iniciando sistema...",
-    criando_venv: "Criando ambiente virtual...",
+    criando_venv: "Configurando ambiente...",
     instalando_dependencias: "Instalando dependências...",
     processando_imagens: "Processando imagens...",
     gerando_embeddings: "Gerando embeddings faciais...",
     salvando_modelo: "Salvando modelo treinado...",
     concluido: "Processamento concluído!",
     finalizado: "Processo finalizado",
-    erro: "Erro durante o processo",
   };
 
   return stageMessages[stage] || "Processando...";
@@ -283,39 +259,41 @@ function finalizarProcesso(acao, consoleOutput, modal, returnCode) {
     eventSource = null;
   }
 
+  const timestamp = new Date().toLocaleTimeString();
+
   // Executar ação específica após conclusão
   if (acao === "treinamento_ia") {
     if (returnCode === 0) {
-      consoleOutput.innerHTML +=
-        "> Treinamento de IA concluído. Modelo pronto para uso.\n";
-      mostrarNotificacao("success", "Treinamento concluído com sucesso!");
+      consoleOutput.innerHTML += `<span class="text-muted">[${timestamp}]</span> <span class="text-success">Treinamento concluído com sucesso!</span>\n`;
+      mostrarNotificacao("success", "Modelo treinado e pronto para uso!");
     } else {
-      consoleOutput.innerHTML +=
-        "> Erro durante o treinamento. Verifique os logs.\n";
-      mostrarNotificacao("error", "Falha no treinamento!");
+      consoleOutput.innerHTML += `<span class="text-muted">[${timestamp}]</span> <span class="text-danger">Erro durante o treinamento</span>\n`;
+      mostrarNotificacao("error", "Verifique os logs para detalhes");
     }
+
+    // Fechar modal após 2 segundos
+    setTimeout(() => {
+      modal.hide();
+      atualizarEstadoBotoes(true);
+    }, 2000);
   } else if (acao === "iniciar_cameras") {
     if (returnCode === 0) {
-      consoleOutput.innerHTML +=
-        "> Sistema de reconhecimento facial inicializado.\n";
-      consoleOutput.innerHTML += "> Verificando câmeras disponíveis...\n";
-      mostrarNotificacao("success", "Sistema de câmeras iniciado!");
-
-      // Atualizar estado das câmeras
-      camerasAtivas = true;
+      consoleOutput.innerHTML += `<span class="text-muted">[${timestamp}]</span> <span class="text-success">Reconhecimento facial executado com sucesso!</span>\n`;
+      mostrarNotificacao("success", "Processo de reconhecimento concluído!");
     } else {
-      consoleOutput.innerHTML +=
-        "> Erro ao iniciar câmeras. Verifique os logs.\n";
-      mostrarNotificacao("error", "Falha ao iniciar câmeras!");
+      consoleOutput.innerHTML += `<span class="text-muted">[${timestamp}]</span> <span class="text-warning">Reconhecimento facial finalizado</span>\n`;
+      mostrarNotificacao("info", "Processo de reconhecimento finalizado");
     }
+
+    // Fechar modal após 2 segundos para câmeras também
+    setTimeout(() => {
+      modal.hide();
+      atualizarEstadoBotoes(true);
+    }, 2000);
   }
 
   // Re-habilitar botões
   atualizarEstadoBotoes(true);
-}
-
-function formatarOutput(output) {
-  return "> " + output.replace(/\n/g, "\n> ");
 }
 
 function atualizarProgresso(percentual, mensagem, stage) {
@@ -329,42 +307,44 @@ function atualizarProgresso(percentual, mensagem, stage) {
   progressBar.setAttribute("aria-valuenow", percentual);
   feedbackMessage.textContent = mensagem;
 
-  // Atualizar a classe da barra de progresso baseada no estágio
+  // Atualizar cores baseado no progresso
   if (stage === "erro") {
     progressBar.className = "progress-bar bg-danger";
-  } else if (percentual < 30) {
-    progressBar.className =
-      "progress-bar progress-bar-striped progress-bar-animated bg-danger";
-  } else if (percentual < 70) {
-    progressBar.className =
-      "progress-bar progress-bar-striped progress-bar-animated bg-warning";
-  } else if (percentual < 100) {
-    progressBar.className =
-      "progress-bar progress-bar-striped progress-bar-animated bg-info";
-  } else {
+    feedbackMessage.className = "text-danger";
+  } else if (percentual === 100) {
     progressBar.className = "progress-bar bg-success";
+    feedbackMessage.className = "text-success";
+  } else {
+    progressBar.className =
+      "progress-bar progress-bar-striped progress-bar-animated bg-primary";
+    feedbackMessage.className = "text-primary";
   }
 }
+
+// ATUALIZADA: Função simplificada para controlar estado dos botões
 function atualizarEstadoBotoes(habilitado) {
-  const botoes = ["btnTreinamentoIA", "btnIniciarCameras"];
+  const btnTreinamentoIA = document.getElementById("btnTreinamentoIA");
+  const btnIniciarCameras = document.getElementById("btnIniciarCameras");
 
-  botoes.forEach((botaoId) => {
-    const botao = document.getElementById(botaoId);
-    if (botao) {
-      botao.disabled = !habilitado;
-    }
-  });
+  // Controle geral dos botões
+  if (btnTreinamentoIA) {
+    btnTreinamentoIA.disabled = !habilitado;
+    btnTreinamentoIA.innerHTML = habilitado
+      ? '<i class="fas fa-robot"></i> Treinar IA'
+      : '<i class="fas fa-spinner fa-spin"></i> Processando...';
+  }
 
-  // Atualizar indicador de status
+  if (btnIniciarCameras) {
+    btnIniciarCameras.disabled = !habilitado;
+    btnIniciarCameras.innerHTML = habilitado
+      ? '<i class="fas fa-camera"></i> Iniciar Reconhecimento'
+      : '<i class="fas fa-spinner fa-spin"></i> Executando...';
+  }
+
+  // Remover qualquer indicador de status de câmera ativa
   const statusIndicator = document.getElementById("statusIndicator");
   if (statusIndicator) {
-    if (camerasAtivas) {
-      statusIndicator.className = "status-indicator active";
-      statusIndicator.title = "Câmeras ativas";
-    } else {
-      statusIndicator.className = "status-indicator";
-      statusIndicator.title = "Câmeras inativas";
-    }
+    statusIndicator.style.display = "none";
   }
 }
 
@@ -377,18 +357,30 @@ function mostrarNotificacao(tipo, mensagem) {
     right: 20px;
     z-index: 1050;
     min-width: 300px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
   `;
+
+  const icons = {
+    success: '<i class="fas fa-check-circle me-2"></i>',
+    error: '<i class="fas fa-exclamation-circle me-2"></i>',
+    warning: '<i class="fas fa-exclamation-triangle me-2"></i>',
+    info: '<i class="fas fa-info-circle me-2"></i>',
+  };
+
   notificacao.innerHTML = `
-    ${mensagem}
-    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    <div class="d-flex align-items-center">
+      ${icons[tipo] || '<i class="fas fa-bell me-2"></i>'}
+      <span class="flex-grow-1">${mensagem}</span>
+      <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
   `;
 
   // Adicionar ao corpo do documento
   document.body.appendChild(notificacao);
 
-  // Remover automaticamente após 5 segundos
+  // Remover automaticamente após 5 segundos (exceto errors)
   setTimeout(() => {
-    if (notificacao.parentNode) {
+    if (notificacao.parentNode && tipo !== "error") {
       notificacao.parentNode.removeChild(notificacao);
     }
   }, 5000);
@@ -424,37 +416,36 @@ verificarStatusServidor();
 
 // Adicionar estilos CSS dinamicamente para melhorar a interface
 const styles = `
-.status-indicator {
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background-color: #dc3545;
-  margin-left: 10px;
-  animation: pulse 2s infinite;
-}
-
-.status-indicator.active {
-  background-color: #28a745;
-  animation: pulse 1s infinite;
-}
-
-@keyframes pulse {
-  0% { opacity: 1; }
-  50% { opacity: 0.5; }
-  100% { opacity: 1; }
-}
-
 .console-output {
-  font-family: 'Courier New', monospace;
-  font-size: 12px;
-  height: 150px;
+  font-family: 'Fira Code', 'Courier New', monospace;
+  font-size: 13px;
+  height: 200px;
   overflow-y: auto;
-  background-color: #1a1a1a;
+  background: #1e1e1e;
   color: #00ff00;
   padding: 15px;
-  border-radius: 5px;
-  border: 1px solid #333;
+  border-radius: 10px;
+  border: 2px solid #333;
+  line-height: 1.4;
+}
+
+.console-output .text-muted {
+  color: #6c757d !important;
+}
+
+.console-output .text-success {
+  color: #28a745 !important;
+  font-weight: bold;
+}
+
+.console-output .text-danger {
+  color: #dc3545 !important;
+  font-weight: bold;
+}
+
+.console-output .text-warning {
+  color: #ffc107 !important;
+  font-weight: bold;
 }
 
 .console-output::-webkit-scrollbar {
@@ -463,6 +454,7 @@ const styles = `
 
 .console-output::-webkit-scrollbar-track {
   background: #2a2a2a;
+  border-radius: 4px;
 }
 
 .console-output::-webkit-scrollbar-thumb {
@@ -472,6 +464,63 @@ const styles = `
 
 .console-output::-webkit-scrollbar-thumb:hover {
   background: #777;
+}
+
+/* Progress bar melhorada */
+.progress {
+  height: 20px;
+  border-radius: 10px;
+  background: #e9ecef;
+  overflow: hidden;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.2);
+}
+
+.progress-bar {
+  border-radius: 10px;
+  transition: width 0.6s ease;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+/* Botões com ícones */
+.btn i {
+  margin-right: 8px;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn:disabled:hover {
+  transform: none !important;
+}
+
+/* Notificações melhoradas */
+.alert {
+  border-radius: 10px;
+  border: none;
+  font-weight: 500;
+}
+
+.alert-success {
+  background: linear-gradient(135deg, #28a745, #20c997);
+  color: white;
+}
+
+.alert-error {
+  background: linear-gradient(135deg, #dc3545, #c82333);
+  color: white;
+}
+
+.alert-warning {
+  background: linear-gradient(135deg, #ffc107, #e0a800);
+  color: #000;
+}
+
+.alert-info {
+  background: linear-gradient(135deg, #17a2b8, #138496);
+  color: white;
 }
 `;
 
