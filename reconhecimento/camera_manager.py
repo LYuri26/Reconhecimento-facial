@@ -102,7 +102,7 @@ class CameraManager:
         """Webcam otimizada para velocidade máxima"""
         try:
             # Tenta apenas o índice 0 (mais comum)
-            self.cap = cv2.VideoCapture(2, cv2.CAP_ANY)
+            self.cap = cv2.VideoCapture(0, cv2.CAP_ANY)
             if not self.cap.isOpened():
                 return False
 
