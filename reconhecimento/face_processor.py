@@ -182,6 +182,19 @@ class FaceProcessor:
             logging.debug(f"Erro na geração de embedding: {str(e)}")
             return None
 
+    def detect_emotion(self, face_img):
+        """Detecta emoção da face"""
+        try:
+            analysis = DeepFace.analyze(
+                img_path=face_img, actions=["emotion"], enforce_detection=False
+            )
+            if analysis and isinstance(analysis, list):
+                return analysis[0].get("dominant_emotion", "desconhecida")
+            return "desconhecida"
+        except Exception as e:
+            logging.debug(f"Erro na análise de emoção: {str(e)}")
+            return "desconhecida"
+
     def clean_old_cache(self):
         """Limpa cache antigo"""
         current_time = time.time()
@@ -279,7 +292,7 @@ class FaceProcessor:
             return None, 0.0
 
     def process_frame(self, frame):
-        """Processamento otimizado para catraca"""
+        """Processamento otimizado para catraca com reconhecimento + emoção"""
         try:
             if frame is None or frame.size == 0:
                 return frame
@@ -328,12 +341,15 @@ class FaceProcessor:
                     # Reconhece a face
                     user_id, similarity = self.recognize_face(live_emb)
 
+                    # Detecta emoção da face
+                    emotion = self.detect_emotion(face_region)
+
                     if user_id:
                         user_info = self.get_user_info(user_id)
-                        label = f"{user_info['nome']} ({similarity:.3f})"
+                        label = f"{user_info['nome']} - {emotion} ({similarity:.3f})"
                         color = (0, 255, 0)  # Verde
 
-                        # Adiciona confiança visual
+                        # Barra de confiança
                         confidence_width = int(w * similarity)
                         cv2.rectangle(
                             display_frame,
@@ -343,7 +359,7 @@ class FaceProcessor:
                             -1,
                         )
                     else:
-                        label = f"Não identificado ({similarity:.3f})"
+                        label = f"Nao identificado - {emotion} ({similarity:.3f})"
                         color = (0, 0, 255)  # Vermelho
 
                 # Desenha retângulo e label
