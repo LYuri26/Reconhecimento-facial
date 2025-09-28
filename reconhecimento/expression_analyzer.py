@@ -1,10 +1,12 @@
-# expression_analyzer.py
+# expression_analyzer.py - ATUALIZADO COM EMOÇÕES BÁSICAS
 import cv2
 import numpy as np
 import dlib
 import logging
 from scipy.spatial import distance as dist
 import time
+from deepface import DeepFace
+import os
 
 
 class ExpressionAnalyzer:
@@ -27,9 +29,9 @@ class ExpressionAnalyzer:
         }
 
         # Configurações
-        self.EYE_AR_THRESH = 0.25  # Threshold para olhos fechados
-        self.MOUTH_AR_THRESH = 0.35  # Threshold para boca aberta
-        self.EAR_CONSEC_FRAMES = 3  # Frames consecutivos para detectar cansaço
+        self.EYE_AR_THRESH = 0.25
+        self.MOUTH_AR_THRESH = 0.35
+        self.EAR_CONSEC_FRAMES = 3
         self.counter = 0
         self.total_blinks = 0
         self.eye_closed_frames = 0
@@ -38,33 +40,78 @@ class ExpressionAnalyzer:
         self.expression_history = []
         self.history_size = 30
 
-        logging.info("Analisador de expressões inicializado")
+        # Emoções básicas
+        self.emotions = [
+            "angry",
+            "disgust",
+            "fear",
+            "happy",
+            "sad",
+            "surprise",
+            "neutral",
+        ]
+
+        logging.info("Analisador de expressões e emoções inicializado")
+
+    def analyze_basic_emotions(self, frame):
+        """Analisa emoções básicas usando DeepFace"""
+        try:
+            # Salva frame temporariamente para análise
+            temp_path = "/tmp/temp_emotion.jpg"
+            cv2.imwrite(temp_path, frame)
+
+            # Analisa emoções
+            analysis = DeepFace.analyze(
+                img_path=temp_path,
+                actions=["emotion"],
+                enforce_detection=False,
+                detector_backend="opencv",
+                silent=True,
+            )
+
+            # Remove arquivo temporário
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+            if analysis and isinstance(analysis, list):
+                emotion_data = analysis[0].get("emotion", {})
+
+                # Encontra emoção dominante
+                dominant_emotion = analysis[0].get("dominant_emotion", "neutral")
+                emotion_scores = {
+                    emotion: emotion_data.get(emotion, 0) for emotion in self.emotions
+                }
+
+                return {
+                    "dominant_emotion": dominant_emotion,
+                    "emotion_scores": emotion_scores,
+                    "confidence": max(emotion_scores.values()) if emotion_scores else 0,
+                }
+
+            return None
+
+        except Exception as e:
+            logging.debug(f"Erro na análise de emoções básicas: {str(e)}")
+            return None
 
     def eye_aspect_ratio(self, eye):
         """Calcula a proporção de abertura dos olhos"""
-        # Calcula as distâncias verticais
         A = dist.euclidean(eye[1], eye[5])
         B = dist.euclidean(eye[2], eye[4])
-        # Calcula a distância horizontal
         C = dist.euclidean(eye[0], eye[3])
-        # Calcula o EAR
         ear = (A + B) / (2.0 * C)
         return ear
 
     def mouth_aspect_ratio(self, mouth):
         """Calcula a proporção de abertura da boca"""
-        # Distância entre os pontos horizontais externos
         A = dist.euclidean(mouth[0], mouth[6])
-        # Distâncias verticais
         B = dist.euclidean(mouth[2], mouth[10])
         C = dist.euclidean(mouth[4], mouth[8])
-        # Calcula o MAR
         mar = (B + C) / (2.0 * A)
         return mar
 
     def get_eyebrow_tension(self, eyebrow, eye):
         """Calcula a tensão nas sobrancelhas"""
-        # Distância média entre sobrancelha e olho
         distances = []
         for i in range(len(eyebrow)):
             dist_val = dist.euclidean(eyebrow[i], eye[i % len(eye)])
@@ -78,11 +125,9 @@ class ExpressionAnalyzer:
         left_eye = landmarks[36]
         right_eye = landmarks[45]
 
-        # Calcula inclinação vertical
         vertical_vector = np.array([chin.x - nose_tip.x, chin.y - nose_tip.y])
         vertical_angle = np.degrees(np.arctan2(vertical_vector[1], vertical_vector[0]))
 
-        # Calcula inclinação horizontal
         eye_center_x = (left_eye.x + right_eye.x) / 2
         head_tilt = (right_eye.y - left_eye.y) / (right_eye.x - left_eye.x)
 
@@ -93,7 +138,6 @@ class ExpressionAnalyzer:
         fatigue_score = 0
         indicators = []
 
-        # Extrai regiões de interesse
         left_eye = [
             (landmarks[i].x, landmarks[i].y) for i in self.FACIAL_LANDMARKS["left_eye"]
         ]
@@ -112,7 +156,7 @@ class ExpressionAnalyzer:
             (landmarks[i].x, landmarks[i].y) for i in self.FACIAL_LANDMARKS["mouth"]
         ]
 
-        # 1. Análise de piscadas e olhos fechados
+        # Análise de piscadas e olhos fechados
         left_ear = self.eye_aspect_ratio(left_eye)
         right_ear = self.eye_aspect_ratio(right_eye)
         ear = (left_ear + right_ear) / 2.0
@@ -124,29 +168,28 @@ class ExpressionAnalyzer:
         else:
             self.eye_closed_frames = max(0, self.eye_closed_frames - 1)
 
-        # Olhos fechados por muito tempo
         if self.eye_closed_frames > 15:
             fatigue_score += 0.4
             indicators.append("Olhos fechados por longo período")
 
-        # 2. Tensão nas sobrancelhas (sinal de esforço)
+        # Tensão nas sobrancelhas
         left_brow_tension = self.get_eyebrow_tension(left_eyebrow, left_eye)
         right_brow_tension = self.get_eyebrow_tension(right_eyebrow, right_eye)
         brow_tension = (left_brow_tension + right_brow_tension) / 2.0
 
-        if brow_tension > 15:  # Threshold empírico
+        if brow_tension > 15:
             fatigue_score += 0.2
             indicators.append("Sobrancelhas tensionadas")
 
-        # 3. Inclinação da cabeça
+        # Inclinação da cabeça
         vertical_angle, head_tilt = self.get_head_pose(landmarks)
-        if abs(vertical_angle) > 20:  # Cabeça muito inclinada
+        if abs(vertical_angle) > 20:
             fatigue_score += 0.2
             indicators.append("Cabeça inclinada")
 
-        # 4. Expressão facial geral (boca)
+        # Expressão facial geral (boca)
         mar = self.mouth_aspect_ratio(mouth)
-        if mar < 0.2:  # Boca muito fechada/tensa
+        if mar < 0.2:
             fatigue_score += 0.1
             indicators.append("Boca tensionada")
 
@@ -157,7 +200,6 @@ class ExpressionAnalyzer:
         sadness_score = 0
         indicators = []
 
-        # Extrai regiões de interesse
         left_eyebrow = [
             (landmarks[i].x, landmarks[i].y)
             for i in self.FACIAL_LANDMARKS["left_eyebrow"]
@@ -170,7 +212,7 @@ class ExpressionAnalyzer:
             (landmarks[i].x, landmarks[i].y) for i in self.FACIAL_LANDMARKS["mouth"]
         ]
 
-        # 1. Cantos da boca para baixo
+        # Cantos da boca para baixo
         left_mouth_corner = landmarks[48]
         right_mouth_corner = landmarks[54]
         mouth_center = landmarks[57]
@@ -182,7 +224,7 @@ class ExpressionAnalyzer:
             sadness_score += 0.4
             indicators.append("Cantos da boca para baixo")
 
-        # 2. Sobrancelhas inclinadas (formato de "V")
+        # Sobrancelhas inclinadas
         left_brow_outer = landmarks[17]
         left_brow_inner = landmarks[21]
         right_brow_outer = landmarks[26]
@@ -199,7 +241,7 @@ class ExpressionAnalyzer:
             sadness_score += 0.3
             indicators.append("Sobrancelhas inclinadas")
 
-        # 3. Pálpebras caídas
+        # Pálpebras caídas
         left_eye = [
             (landmarks[i].x, landmarks[i].y) for i in self.FACIAL_LANDMARKS["left_eye"]
         ]
@@ -216,38 +258,6 @@ class ExpressionAnalyzer:
 
         return min(sadness_score, 1.0), indicators
 
-    def analyze_demotivation(self, landmarks, previous_landmarks=None):
-        """Analisa sinais de desânimo/desmotivação"""
-        demotivation_score = 0
-        indicators = []
-
-        # Combina elementos de cansaço e tristeza
-        fatigue_score, fatigue_indicators = self.analyze_fatigue(landmarks)
-        sadness_score, sadness_indicators = self.analyze_sadness(landmarks)
-
-        demotivation_score = fatigue_score * 0.6 + sadness_score * 0.4
-
-        # Movimento reduzido (se tiver frame anterior)
-        if previous_landmarks:
-            movement = self.calculate_facial_movement(landmarks, previous_landmarks)
-            if movement < 2.0:  # Pouco movimento facial
-                demotivation_score += 0.2
-                indicators.append("Expressão estática")
-
-        indicators.extend(fatigue_indicators)
-        indicators.extend(sadness_indicators)
-
-        return min(demotivation_score, 1.0), list(set(indicators))
-
-    def calculate_facial_movement(self, current_landmarks, previous_landmarks):
-        """Calcula o movimento facial entre frames"""
-        total_movement = 0
-        for i in range(len(current_landmarks)):
-            current_point = (current_landmarks[i].x, current_landmarks[i].y)
-            previous_point = (previous_landmarks[i].x, previous_landmarks[i].y)
-            total_movement += dist.euclidean(current_point, previous_point)
-        return total_movement / len(current_landmarks)
-
     def detect_landmarks(self, frame):
         """Detecta landmarks faciais no frame"""
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -256,52 +266,49 @@ class ExpressionAnalyzer:
         if len(faces) == 0:
             return None
 
-        # Usa a primeira face detectada
         face = faces[0]
         landmarks = self.predictor(gray, face)
 
         return landmarks
 
-    def analyze_expressions(self, frame, previous_landmarks=None):
-        """Analisa todas as expressões faciais"""
+    def analyze_expressions(self, frame):
+        """Analisa todas as expressões faciais e emoções"""
         results = {
+            "basic_emotions": {
+                "dominant_emotion": "neutral",
+                "emotion_scores": {},
+                "confidence": 0,
+            },
             "fatigue": {"score": 0, "indicators": [], "level": "Baixo"},
             "sadness": {"score": 0, "indicators": [], "level": "Baixo"},
-            "demotivation": {"score": 0, "indicators": [], "level": "Baixo"},
             "landmarks": None,
         }
 
+        # Analisa emoções básicas
+        emotion_results = self.analyze_basic_emotions(frame)
+        if emotion_results:
+            results["basic_emotions"] = emotion_results
+
+        # Analisa landmarks para expressões específicas
         landmarks = self.detect_landmarks(frame)
-        if landmarks is None:
-            return results
+        if landmarks is not None:
+            results["landmarks"] = landmarks
 
-        results["landmarks"] = landmarks
+            # Analisa expressões específicas
+            fatigue_score, fatigue_indicators = self.analyze_fatigue(landmarks)
+            sadness_score, sadness_indicators = self.analyze_sadness(landmarks)
 
-        # Analisa cada expressão
-        fatigue_score, fatigue_indicators = self.analyze_fatigue(landmarks)
-        sadness_score, sadness_indicators = self.analyze_sadness(landmarks)
-        demotivation_score, demotivation_indicators = self.analyze_demotivation(
-            landmarks, previous_landmarks
-        )
+            results["fatigue"] = {
+                "score": fatigue_score,
+                "indicators": fatigue_indicators,
+                "level": self.get_expression_level(fatigue_score),
+            }
 
-        # Atualiza resultados
-        results["fatigue"] = {
-            "score": fatigue_score,
-            "indicators": fatigue_indicators,
-            "level": self.get_expression_level(fatigue_score),
-        }
-
-        results["sadness"] = {
-            "score": sadness_score,
-            "indicators": sadness_indicators,
-            "level": self.get_expression_level(sadness_score),
-        }
-
-        results["demotivation"] = {
-            "score": demotivation_score,
-            "indicators": demotivation_indicators,
-            "level": self.get_expression_level(demotivation_score),
-        }
+            results["sadness"] = {
+                "score": sadness_score,
+                "indicators": sadness_indicators,
+                "level": self.get_expression_level(sadness_score),
+            }
 
         # Atualiza histórico
         self.update_expression_history(results)
@@ -322,80 +329,122 @@ class ExpressionAnalyzer:
         self.expression_history.append(
             {
                 "timestamp": time.time(),
+                "dominant_emotion": results["basic_emotions"]["dominant_emotion"],
                 "fatigue": results["fatigue"]["score"],
                 "sadness": results["sadness"]["score"],
-                "demotivation": results["demotivation"]["score"],
             }
         )
 
-        # Mantém apenas o histórico mais recente
         if len(self.expression_history) > self.history_size:
             self.expression_history.pop(0)
+
+    def get_emotion_emoji(self, emotion):
+        """Retorna emoji para cada emoção"""
+        emojis = {
+            "happy": "😊",
+            "sad": "😔",
+            "angry": "😠",
+            "surprise": "😲",
+            "fear": "😨",
+            "disgust": "🤢",
+            "neutral": "😐",
+        }
+        return emojis.get(emotion, "😐")
+
+    def draw_analysis(self, frame, results):
+        """Desenha a análise completa no frame"""
+        if results["landmarks"] is not None:
+            landmarks = results["landmarks"]
+            for i in range(68):
+                x, y = landmarks.part(i).x, landmarks.part(i).y
+                cv2.circle(frame, (x, y), 1, (0, 255, 255), -1)
+
+        # Adiciona informações textuais
+        h, w = frame.shape[:2]
+
+        # Emoção dominante (grande no topo)
+        dominant_emotion = results["basic_emotions"]["dominant_emotion"]
+        confidence = results["basic_emotions"]["confidence"]
+        emoji = self.get_emotion_emoji(dominant_emotion)
+
+        emotion_text = f"{emoji} {dominant_emotion.upper()} ({confidence:.1%})"
+        cv2.putText(
+            frame,
+            emotion_text,
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (255, 255, 255),
+            2,
+        )
+
+        # Todas as emoções (lado direito)
+        emotion_scores = results["basic_emotions"]["emotion_scores"]
+        y_offset = 60
+
+        for emotion, score in emotion_scores.items():
+            if score > 5:  # Mostra apenas emoções com mais de 5%
+                emoji = self.get_emotion_emoji(emotion)
+                text = f"{emoji} {emotion}: {score:.1f}%"
+                color = (0, 255, 0) if emotion == dominant_emotion else (200, 200, 200)
+                cv2.putText(
+                    frame,
+                    text,
+                    (w - 200, y_offset),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.4,
+                    color,
+                    1,
+                )
+                y_offset += 20
+
+        # Expressões específicas (parte inferior)
+        expr_y = h - 10
+
+        fatigue_level = results["fatigue"]["level"]
+        if fatigue_level != "Baixo":
+            color = (0, 0, 255) if fatigue_level == "Alto" else (0, 165, 255)
+            cv2.putText(
+                frame,
+                f"😴 Cansaço: {fatigue_level}",
+                (10, expr_y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                color,
+                1,
+            )
+            expr_y -= 25
+
+        sadness_level = results["sadness"]["level"]
+        if sadness_level != "Baixo":
+            color = (0, 0, 255) if sadness_level == "Alto" else (0, 165, 255)
+            cv2.putText(
+                frame,
+                f"😔 Tristeza: {sadness_level}",
+                (10, expr_y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                color,
+                1,
+            )
+            expr_y -= 25
+
+        return frame
 
     def get_trend_analysis(self):
         """Analisa tendências ao longo do tempo"""
         if len(self.expression_history) < 10:
             return "Dados insuficientes para análise de tendência"
 
-        recent_fatigue = np.mean(
-            [entry["fatigue"] for entry in self.expression_history[-10:]]
-        )
-        earlier_fatigue = np.mean(
-            [entry["fatigue"] for entry in self.expression_history[:10]]
-        )
-
-        if recent_fatigue > earlier_fatigue + 0.2:
-            return "Tendência de aumento de cansaço"
-        elif recent_fatigue < earlier_fatigue - 0.2:
-            return "Tendência de redução de cansaço"
-        else:
-            return "Estável"
-
-    def draw_analysis(self, frame, results):
-        """Desenha a análise no frame"""
-        if results["landmarks"] is None:
-            return frame
-
-        # Desenha landmarks
-        landmarks = results["landmarks"]
-        for i in range(68):
-            x, y = landmarks.part(i).x, landmarks.part(i).y
-            cv2.circle(frame, (x, y), 1, (0, 255, 255), -1)
-
-        # Adiciona informações textuais
-        y_offset = 30
-        expressions = [
-            f"Cansaço: {results['fatigue']['level']} ({results['fatigue']['score']:.2f})",
-            f"Tristeza: {results['sadness']['level']} ({results['sadness']['score']:.2f})",
-            f"Desânimo: {results['demotivation']['level']} ({results['demotivation']['score']:.2f})",
+        recent_emotions = [
+            entry["dominant_emotion"] for entry in self.expression_history[-10:]
         ]
+        emotion_counts = {}
+        for emotion in recent_emotions:
+            emotion_counts[emotion] = emotion_counts.get(emotion, 0) + 1
 
-        for expr in expressions:
-            cv2.putText(
-                frame,
-                expr,
-                (10, y_offset),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (255, 255, 255),
-                1,
-            )
-            y_offset += 20
-
-        # Adiciona indicadores se houver
-        if results["fatigue"]["indicators"]:
-            indicators = ", ".join(results["fatigue"]["indicators"][:2])
-            cv2.putText(
-                frame,
-                f"Indicadores: {indicators}",
-                (10, y_offset),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.4,
-                (255, 255, 0),
-                1,
-            )
-
-        return frame
+        dominant_recent = max(emotion_counts, key=emotion_counts.get)
+        return f"Emocao predominante recente: {dominant_recent}"
 
     def cleanup(self):
         """Limpeza de recursos"""
