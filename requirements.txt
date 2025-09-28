@@ -1,28 +1,28 @@
 # ==================================================
-# Requisitos para Reconhecimento Facial
-# Testado em Python 3.10
+# Requisitos para Reconhecimento Facial + Emoções
+# Testado em Python 3.10 no Ubuntu
 # ==================================================
 
 # Dependências básicas
 numpy==1.26.4
 Pillow==10.1.0
 opencv-contrib-python==4.9.0.80
+opencv-python==4.9.0.80
 mysql-connector-python==8.1.0
 pyfiglet==0.8.post1
 pandas==2.1.4
 tqdm==4.66.1
 gdown==4.7.1
 retrying==1.3.4
+
+# Stack científica
 scipy==1.11.4
 scikit-learn==1.3.2
 scikit-image==0.21.0
 
-# DeepFace e stack de ML
+# Deep Learning e Face Recognition
 deepface==0.0.79
 tensorflow==2.15.0
 tf-keras==2.15.1
 keras==2.15.0
 mtcnn==0.1.1
-
-# dlib (binário pronto para evitar erros de compilação)
-dlib-bin==19.24.2

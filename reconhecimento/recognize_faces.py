@@ -1,4 +1,4 @@
-# recognize_faces.py - ATUALIZADO
+# recognize_faces.py - COMPLETO COM ANÁLISE DE EXPRESSÕES
 import cv2
 import time
 import logging
@@ -55,10 +55,20 @@ class FaceRecognizer:
         self.last_recognition_time = 0
         self.recognition_cooldown = 2  # segundos entre reconhecimentos
 
+        # Estatísticas e monitoramento
+        self.expression_alerts = []
+        self.alert_cooldown = 10  # segundos entre alertas repetidos
+        self.last_alert_time = {}
+        self.performance_stats = {
+            "frames_processed": 0,
+            "expression_analyses": 0,
+            "start_time": time.time(),
+        }
+
     def initialize_system(self):
         """Inicialização otimizada"""
         try:
-            logging.info("Inicializando sistema de catraca...")
+            logging.info("Inicializando sistema de reconhecimento...")
 
             # Tenta webcam primeiro (fallback rápido)
             if self.initialize_webcam():
@@ -106,8 +116,8 @@ class FaceRecognizer:
     def create_display_window(self):
         """Cria janela de exibição otimizada"""
         try:
-            cv2.namedWindow("Sistema de Catraca", cv2.WINDOW_NORMAL)
-            cv2.resizeWindow("Sistema de Catraca", 800, 600)
+            cv2.namedWindow("sistema de reconhecimento", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("sistema de reconhecimento", 800, 600)
             self.window_created = True
             return True
         except Exception as e:
@@ -122,16 +132,70 @@ class FaceRecognizer:
         elif key == ord("r") or key == ord("R"):
             logging.info("Recarregando modelo...")
             self.face_processor.load_model()
+        elif key == ord("e") or key == ord("E"):
+            # Toggle análise de expressões
+            self.face_processor.enable_expression_analysis = (
+                not self.face_processor.enable_expression_analysis
+            )
+            status = (
+                "ATIVADA"
+                if self.face_processor.enable_expression_analysis
+                else "DESATIVADA"
+            )
+            logging.info(f"Análise de expressões {status}")
+            self.expression_alerts.append(f"Expressões {status}")
+        elif key == ord("s") or key == ord("S"):
+            # Mostrar estatísticas
+            self.show_statistics()
         return True
+
+    def show_statistics(self):
+        """Mostra estatísticas do sistema"""
+        try:
+            current_time = time.time()
+            runtime = current_time - self.performance_stats["start_time"]
+            fps = (
+                self.performance_stats["frames_processed"] / runtime
+                if runtime > 0
+                else 0
+            )
+
+            stats_text = [
+                f"Tempo de execução: {runtime:.1f}s",
+                f"Frames processados: {self.performance_stats['frames_processed']}",
+                f"FPS médio: {fps:.1f}",
+                f"Análises de expressão: {self.performance_stats['expression_analyses']}",
+                f"Expressões ativas: {'SIM' if self.face_processor.enable_expression_analysis else 'NÃO'}",
+            ]
+
+            # Adiciona estatísticas de expressões se disponíveis
+            expr_stats = self.face_processor.get_expression_statistics()
+            if expr_stats:
+                stats_text.append(
+                    f"Tendência: {expr_stats.get('trend_analysis', 'N/A')}"
+                )
+                stats_text.append(
+                    f"Histórico: {expr_stats.get('history_size', 0)} amostras"
+                )
+
+            print("\n" + "=" * 50)
+            print("📊 ESTATÍSTICAS DO SISTEMA")
+            print("=" * 50)
+            for stat in stats_text:
+                print(f"  {stat}")
+            print("=" * 50)
+
+        except Exception as e:
+            logging.debug(f"Erro ao mostrar estatísticas: {str(e)}")
 
     def draw_status_overlay(self, frame, fps, status):
         """Overlay otimizado de status"""
         try:
             h, w = frame.shape[:2]
 
-            # Fundo semi-transparente
+            # Fundo semi-transparente para status
             overlay = frame.copy()
-            cv2.rectangle(overlay, (0, 0), (w, 60), (0, 0, 0), -1)
+            cv2.rectangle(overlay, (0, 0), (w, 90), (0, 0, 0), -1)
             cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
 
             # Status do sistema
@@ -157,24 +221,168 @@ class FaceRecognizer:
                 1,
             )
 
-            # Instruções
+            # Status da análise de expressões
+            expr_status = (
+                "ATIVADA"
+                if self.face_processor.enable_expression_analysis
+                else "DESATIVADA"
+            )
+            expr_color = (
+                (0, 255, 0)
+                if self.face_processor.enable_expression_analysis
+                else (0, 0, 255)
+            )
             cv2.putText(
                 frame,
-                "Q - Sair | R - Recarregar Modelo",
-                (w - 300, 25),
+                f"EXPRESSOES: {expr_status}",
+                (10, 75),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (200, 200, 200),
+                0.6,
+                expr_color,
                 1,
             )
+
+            # Instruções
+            instructions = [
+                "Q - Sair",
+                "R - Recarregar Modelo",
+                "E - Toggle Expressoes",
+                "S - Estatisticas",
+            ]
+
+            y_offset = 25
+            for instruction in instructions:
+                cv2.putText(
+                    frame,
+                    instruction,
+                    (w - 200, y_offset),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (200, 200, 200),
+                    1,
+                )
+                y_offset += 20
+
+            # Alertas recentes de expressões
+            if self.expression_alerts:
+                recent_alerts = self.expression_alerts[-3:]  # Últimos 3 alertas
+                alert_y = h - 10
+                for alert in reversed(recent_alerts):
+                    cv2.putText(
+                        frame,
+                        alert,
+                        (10, alert_y),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.4,
+                        (0, 165, 255),  # Laranja
+                        1,
+                    )
+                    alert_y -= 15
 
             return frame
         except Exception as e:
             logging.debug(f"Erro no overlay: {str(e)}")
             return frame
 
+    def process_expression_alerts(self, expression_results):
+        """Processa alertas de expressões críticas"""
+        try:
+            if not expression_results:
+                return
+
+            current_time = time.time()
+            alerts = []
+
+            # Verifica níveis críticos
+            fatigue_level = expression_results.get("fatigue", {}).get("level", "Baixo")
+            fatigue_score = expression_results.get("fatigue", {}).get("score", 0)
+
+            sadness_level = expression_results.get("sadness", {}).get("level", "Baixo")
+            sadness_score = expression_results.get("sadness", {}).get("score", 0)
+
+            demotivation_level = expression_results.get("demotivation", {}).get(
+                "level", "Baixo"
+            )
+            demotivation_score = expression_results.get("demotivation", {}).get(
+                "score", 0
+            )
+
+            # Alertas de cansaço
+            if fatigue_level == "Alto" and fatigue_score > 0.7:
+                alert_key = "fatigue_high"
+                if (
+                    current_time - self.last_alert_time.get(alert_key, 0)
+                    > self.alert_cooldown
+                ):
+                    alerts.append("🚨 ALERTA: CANSACO ELEVADO")
+                    self.last_alert_time[alert_key] = current_time
+                    logging.warning("ALERTA: Nível elevado de cansaço detectado")
+
+            elif fatigue_level == "Médio" and fatigue_score > 0.4:
+                alert_key = "fatigue_medium"
+                if (
+                    current_time - self.last_alert_time.get(alert_key, 0)
+                    > self.alert_cooldown * 2
+                ):
+                    alerts.append("⚠️ ATENCAO: SINAIS DE CANSACO")
+                    self.last_alert_time[alert_key] = current_time
+
+            # Alertas de tristeza
+            if sadness_level == "Alto" and sadness_score > 0.7:
+                alert_key = "sadness_high"
+                if (
+                    current_time - self.last_alert_time.get(alert_key, 0)
+                    > self.alert_cooldown
+                ):
+                    alerts.append("🚨 ALERTA: TRISTEZA ELEVADA")
+                    self.last_alert_time[alert_key] = current_time
+                    logging.warning("ALERTA: Nível elevado de tristeza detectado")
+
+            elif sadness_level == "Médio" and sadness_score > 0.4:
+                alert_key = "sadness_medium"
+                if (
+                    current_time - self.last_alert_time.get(alert_key, 0)
+                    > self.alert_cooldown * 2
+                ):
+                    alerts.append("⚠️ ATENCAO: SINAIS DE TRISTEZA")
+                    self.last_alert_time[alert_key] = current_time
+
+            # Alertas de desânimo
+            if demotivation_level == "Alto" and demotivation_score > 0.7:
+                alert_key = "demotivation_high"
+                if (
+                    current_time - self.last_alert_time.get(alert_key, 0)
+                    > self.alert_cooldown
+                ):
+                    alerts.append("🚨 ALERTA: DESANIMO ELEVADO")
+                    self.last_alert_time[alert_key] = current_time
+                    logging.warning("ALERTA: Nível elevado de desânimo detectado")
+
+            elif demotivation_level == "Médio" and demotivation_score > 0.4:
+                alert_key = "demotivation_medium"
+                if (
+                    current_time - self.last_alert_time.get(alert_key, 0)
+                    > self.alert_cooldown * 2
+                ):
+                    alerts.append("⚠️ ATENCAO: SINAIS DE DESANIMO")
+                    self.last_alert_time[alert_key] = current_time
+
+            # Adiciona alertas à lista
+            for alert in alerts:
+                if (
+                    alert not in self.expression_alerts[-5:]
+                ):  # Evita repetições recentes
+                    self.expression_alerts.append(alert)
+
+            # Mantém apenas os últimos 10 alertas
+            if len(self.expression_alerts) > 10:
+                self.expression_alerts = self.expression_alerts[-10:]
+
+        except Exception as e:
+            logging.debug(f"Erro no processamento de alertas: {str(e)}")
+
     def run(self):
-        """Loop principal otimizado para catraca"""
+        """Loop principal otimizado para catraca com análise de expressões"""
         try:
             if not self.initialize_system():
                 logging.error("Falha na inicialização do sistema")
@@ -183,10 +391,11 @@ class FaceRecognizer:
             self.create_display_window()
             self.running = True
 
-            logging.info("Sistema de catraca iniciado")
+            logging.info("sistema de reconhecimento iniciado")
             fps_counter = 0
             fps_time = time.time()
             last_frame_time = time.time()
+            last_statistics_time = time.time()
 
             while self.running:
                 try:
@@ -206,6 +415,9 @@ class FaceRecognizer:
                         time.sleep(0.1)
                         continue
 
+                    # Atualiza estatísticas
+                    self.performance_stats["frames_processed"] += 1
+
                     # Verifica se a câmera está tampada
                     if self.face_processor.is_camera_covered(frame):
                         cv2.putText(
@@ -218,8 +430,25 @@ class FaceRecognizer:
                             2,
                         )
                     else:
-                        # Processamento otimizado do frame
+                        # Processamento otimizado do frame (inclui reconhecimento e expressões)
                         frame = self.face_processor.process_frame(frame)
+
+                        # Processamento adicional de expressões (fallback)
+                        if (
+                            hasattr(self.face_processor, "process_expressions")
+                            and self.face_processor.enable_expression_analysis
+                        ):
+                            try:
+                                frame, expression_results = (
+                                    self.face_processor.process_expressions(frame)
+                                )
+                                if expression_results:
+                                    self.performance_stats["expression_analyses"] += 1
+                                    self.process_expression_alerts(expression_results)
+                            except Exception as e:
+                                logging.debug(
+                                    f"Erro na análise secundária de expressões: {str(e)}"
+                                )
 
                     # Cálculo de FPS
                     fps_counter += 1
@@ -241,7 +470,16 @@ class FaceRecognizer:
                     frame = self.draw_status_overlay(frame, fps, status)
 
                     # Exibe frame
-                    cv2.imshow("Sistema de Catraca", frame)
+                    cv2.imshow("sistema de reconhecimento", frame)
+
+                    # Log de estatísticas a cada 30 segundos
+                    if current_time - last_statistics_time >= 30:
+                        runtime = current_time - self.performance_stats["start_time"]
+                        avg_fps = self.performance_stats["frames_processed"] / runtime
+                        logging.info(
+                            f"Estatísticas: {avg_fps:.1f} FPS, {self.performance_stats['frames_processed']} frames, {self.performance_stats['expression_analyses']} análises de expressão"
+                        )
+                        last_statistics_time = current_time
 
                     # Controle de teclas (otimizado)
                     key = cv2.waitKey(1) & 0xFF
@@ -259,16 +497,60 @@ class FaceRecognizer:
         finally:
             self.cleanup()
 
+    def print_final_statistics(self):
+        """Imprime estatísticas finais do sistema"""
+        try:
+            current_time = time.time()
+            runtime = current_time - self.performance_stats["start_time"]
+
+            print("\n" + "=" * 60)
+            print("📊 ESTATÍSTICAS FINAIS")
+            print("=" * 60)
+            print(f"  ⏰ Tempo total de execução: {runtime:.1f} segundos")
+            print(
+                f"  📷 Frames processados: {self.performance_stats['frames_processed']}"
+            )
+            print(
+                f"  🎯 FPS médio: {self.performance_stats['frames_processed'] / runtime:.1f}"
+                if runtime > 0
+                else "  🎯 FPS médio: N/A"
+            )
+            print(
+                f"  😊 Análises de expressão: {self.performance_stats['expression_analyses']}"
+            )
+            print(f"  ⚠️  Alertas gerados: {len(self.expression_alerts)}")
+
+            # Estatísticas de expressões
+            expr_stats = self.face_processor.get_expression_statistics()
+            if expr_stats:
+                print(
+                    f"  📈 Tendência final: {expr_stats.get('trend_analysis', 'N/A')}"
+                )
+                print(
+                    f"  🗂️  Amostras no histórico: {expr_stats.get('history_size', 0)}"
+                )
+
+            print("=" * 60)
+
+        except Exception as e:
+            logging.debug(f"Erro ao imprimir estatísticas finais: {str(e)}")
+
     def cleanup(self):
         """Limpeza otimizada de recursos"""
         try:
             self.running = False
+
+            # Imprime estatísticas finais
+            self.print_final_statistics()
+
+            # Limpeza dos módulos
             if hasattr(self, "camera_manager"):
                 self.camera_manager.cleanup()
             if hasattr(self, "face_processor"):
                 self.face_processor.cleanup()
             if self.window_created:
                 cv2.destroyAllWindows()
+
             logging.info("Sistema finalizado corretamente")
         except Exception as e:
             logging.error(f"Erro na limpeza: {str(e)}")
@@ -277,12 +559,19 @@ class FaceRecognizer:
 if __name__ == "__main__":
     try:
         print("=" * 60)
-        print("🚀 SISTEMA DE CATRACA FACIAL - INICIANDO")
+        print("🚀 SISTEMA DE RECONHECIMENTO FACIAL - INICIANDO")
         print("=" * 60)
         print("Configurações otimizadas para:")
         print("  ✓ Baixo número de imagens (1-5 por pessoa)")
         print("  ✓ Velocidade de resposta")
         print("  ✓ Confiabilidade em ambiente de catraca")
+        print("  ✓ Análise de expressões (cansaço, tristeza, desânimo)")
+        print("=" * 60)
+        print("Controles:")
+        print("  Q - Sair do sistema")
+        print("  R - Recarregar modelo de reconhecimento")
+        print("  E - Ativar/desativar análise de expressões")
+        print("  S - Mostrar estatísticas")
         print("=" * 60)
 
         recognizer = FaceRecognizer()
