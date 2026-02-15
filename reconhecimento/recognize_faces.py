@@ -1,4 +1,4 @@
-# recognize_faces.py - INTERFACE SIMPLIFICADA
+# recognize_faces.py - INTERFACE SIMPLIFICADA E OTIMIZADA
 import cv2
 import time
 import logging
@@ -6,6 +6,9 @@ import os
 import sys
 import numpy as np
 from pathlib import Path
+
+# Importações para desenho de texto Unicode
+from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -34,21 +37,76 @@ except AttributeError:
         cv2.setLogLevel(cv2.LOG_LEVEL_ERROR)
 
 
+class UnicodeTextDrawer:
+    """Desenha texto Unicode em imagens OpenCV usando PIL"""
+
+    def __init__(self, font_size=20):
+        self.font_size = font_size
+        self.font = None
+        # Lista de possíveis caminhos para fontes com suporte a acentos
+        font_paths = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/System/Library/Fonts/Arial.ttf",  # macOS
+            "C:\\Windows\\Fonts\\Arial.ttf",  # Windows
+            "arial.ttf",
+        ]
+        for path in font_paths:
+            try:
+                self.font = ImageFont.truetype(path, self.font_size)
+                logging.info(f"Fonte carregada: {path}")
+                break
+            except:
+                continue
+        if self.font is None:
+            self.font = ImageFont.load_default()
+            logging.warning(
+                "Fonte TrueType não encontrada. Usando fonte padrão (acentos podem falhar)."
+            )
+
+    def draw_text(self, img_cv, text, pos, color=(255, 255, 255), font_size=None):
+        """Desenha texto Unicode na imagem OpenCV e retorna a imagem modificada."""
+        if font_size is not None and font_size != self.font_size:
+            # Tenta criar fonte com tamanho diferente
+            try:
+                font = ImageFont.truetype(self.font.path, font_size)
+            except:
+                font = self.font
+        else:
+            font = self.font
+
+        # Converte OpenCV BGR para PIL RGB
+        img_rgb = cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
+        pil_img = Image.fromarray(img_rgb)
+        draw = ImageDraw.Draw(pil_img)
+        # PIL espera cor em RGB, então invertemos a tupla BGR
+        draw.text(pos, text, font=font, fill=(color[2], color[1], color[0]))
+        # Converte de volta para OpenCV BGR
+        img_cv = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+        return img_cv
+
+
 class FaceRecognizer:
     def __init__(self):
         # Configurações otimizadas para catraca
         self.rtsp_url = (
             "rtsp://admin:Evento0128@192.168.1.101:559/Streaming/Channels/101"
         )
-        self.width = 640
-        self.height = 480
-        self.target_fps = 15  # Aumentado para resposta mais rápida
+        # Resolução reduzida para desempenho
+        self.width = 320
+        self.height = 240
+        self.target_fps = 8
 
-        # Inicializa os módulos com configurações otimizadas
+        # Inicializa os módulos
         self.camera_manager = CameraManager(
             self.rtsp_url, self.width, self.height, self.target_fps
         )
-        self.face_processor = FaceProcessor(threshold=0.65)  # Otimizado
+        self.face_processor = FaceProcessor(threshold=0.65)
+        # Análise de expressões sempre ativa
+        self.face_processor.enable_expression_analysis = True
+
+        # Inicializa desenhador Unicode
+        self.text_drawer = UnicodeTextDrawer(font_size=18)
 
         self.running = False
         self.window_created = False
@@ -117,7 +175,7 @@ class FaceRecognizer:
         """Cria janela de exibição otimizada"""
         try:
             cv2.namedWindow("Sistema de Reconhecimento Facial", cv2.WINDOW_NORMAL)
-            cv2.resizeWindow("Sistema de Reconhecimento Facial", 800, 600)
+            cv2.resizeWindow("Sistema de Reconhecimento Facial", 640, 480)
             self.window_created = True
             return True
         except Exception as e:
@@ -125,27 +183,11 @@ class FaceRecognizer:
             return False
 
     def handle_keypress(self, key):
-        """Manipulação otimizada de teclas"""
+        """Manipulação otimizada de teclas - apenas Q para sair e S para estatísticas"""
         if key == ord("q") or key == ord("Q"):
             logging.info("Solicitação de saída pelo usuário")
             return False
-        elif key == ord("r") or key == ord("R"):
-            logging.info("Recarregando modelo...")
-            self.face_processor.load_model()
-        elif key == ord("e") or key == ord("E"):
-            # Toggle análise de expressões
-            self.face_processor.enable_expression_analysis = (
-                not self.face_processor.enable_expression_analysis
-            )
-            status = (
-                "ATIVADA"
-                if self.face_processor.enable_expression_analysis
-                else "DESATIVADA"
-            )
-            logging.info(f"Análise de expressões {status}")
-            self.expression_alerts.append(f"Expressões {status}")
         elif key == ord("s") or key == ord("S"):
-            # Mostrar estatísticas
             self.show_statistics()
         return True
 
@@ -161,114 +203,83 @@ class FaceRecognizer:
             )
 
             stats_text = [
-                f"Tempo de execução: {runtime:.1f}s",
+                f"Tempo de execucao: {runtime:.1f}s",
                 f"Frames processados: {self.performance_stats['frames_processed']}",
-                f"FPS médio: {fps:.1f}",
-                f"Análises de expressão: {self.performance_stats['expression_analyses']}",
-                f"Expressões ativas: {'SIM' if self.face_processor.enable_expression_analysis else 'NÃO'}",
+                f"FPS medio: {fps:.1f}",
+                f"Analises de expressao: {self.performance_stats['expression_analyses']}",
             ]
 
             # Adiciona estatísticas de expressões se disponíveis
             expr_stats = self.face_processor.get_expression_statistics()
             if expr_stats:
                 stats_text.append(
-                    f"Tendência: {expr_stats.get('trend_analysis', 'N/A')}"
+                    f"Tendencia: {expr_stats.get('trend_analysis', 'N/A')}"
                 )
                 stats_text.append(
-                    f"Histórico: {expr_stats.get('history_size', 0)} amostras"
+                    f"Historico: {expr_stats.get('history_size', 0)} amostras"
                 )
 
             print("\n" + "=" * 50)
-            print("📊 ESTATÍSTICAS DO SISTEMA")
+            print("📊 ESTATISTICAS DO SISTEMA")
             print("=" * 50)
             for stat in stats_text:
                 print(f"  {stat}")
             print("=" * 50)
 
         except Exception as e:
-            logging.debug(f"Erro ao mostrar estatísticas: {str(e)}")
+            logging.debug(f"Erro ao mostrar estatisticas: {str(e)}")
 
     def draw_status_overlay(self, frame, fps, status):
-        """Overlay otimizado de status - INTERFACE SIMPLIFICADA"""
+        """
+        Desenha informações mínimas na tela de forma discreta:
+        - Barra superior fina com status e FPS
+        - Canto superior direito: emoção dominante (se disponível)
+        - Canto inferior esquerdo: alertas de cansaço/tristeza (se relevantes)
+        """
         try:
             h, w = frame.shape[:2]
 
-            # Fundo semi-transparente para status
+            # --- Barra superior semi-transparente muito fina ---
             overlay = frame.copy()
-            cv2.rectangle(overlay, (0, 0), (w, 80), (0, 0, 0), -1)
-            cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+            cv2.rectangle(overlay, (0, 0), (w, 30), (0, 0, 0), -1)
+            cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
 
-            # Status do sistema
-            color = (0, 255, 0) if status == "OPERACIONAL" else (0, 0, 255)
+            # Status do sistema (esquerda)
+            color_status = (0, 255, 0) if status == "OPERACIONAL" else (0, 0, 255)
             cv2.putText(
                 frame,
-                f"SISTEMA: {status}",
-                (10, 25),
+                f"{status}",
+                (10, 20),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                color,
-                2,
+                0.4,
+                color_status,
+                1,
             )
 
-            # FPS
+            # FPS (direita na barra)
+            fps_text = f"FPS: {fps:.1f}"
+            (tw, th), _ = cv2.getTextSize(fps_text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
             cv2.putText(
                 frame,
-                f"FPS: {fps:.1f}",
-                (10, 50),
+                fps_text,
+                (w - tw - 10, 20),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
+                0.4,
                 (255, 255, 255),
                 1,
             )
 
-            # Status da análise de expressões
-            expr_status = (
-                "ATIVADA"
-                if self.face_processor.enable_expression_analysis
-                else "DESATIVADA"
-            )
-            expr_color = (
-                (0, 255, 0)
-                if self.face_processor.enable_expression_analysis
-                else (0, 0, 255)
-            )
-            cv2.putText(
-                frame,
-                f"EXPRESSOES: {expr_status}",
-                (10, 75),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                expr_color,
-                1,
-            )
-
-            # Instruções
-            instructions = "Q-Sair  R-Recarregar  E-Expressoes  S-Estats"
-            cv2.putText(
-                frame,
-                instructions,
-                (w - 300, 25),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (200, 200, 200),
-                1,
-            )
-
-            # EMOÇÃO PRINCIPAL EM TEMPO REAL - SIMPLIFICADA
+            # --- Emoção dominante (canto superior direito, fora da barra) ---
             if (
                 hasattr(self.face_processor, "expression_results")
                 and self.face_processor.expression_results
-                and self.face_processor.enable_expression_analysis
             ):
-
                 expr_results = self.face_processor.expression_results
-
-                # Emoção dominante
                 basic_emotions = expr_results.get("basic_emotions", {})
                 dominant_emotion = basic_emotions.get("dominant_emotion", "neutral")
                 confidence = basic_emotions.get("confidence", 0)
 
-                # Mapeamento de emoções para português
+                # Tradução para português sem acentos
                 emotion_translation = {
                     "happy": "ALEGRE",
                     "sad": "TRISTE",
@@ -281,88 +292,113 @@ class FaceRecognizer:
 
                 # Cores para cada emoção
                 emotion_colors = {
-                    "happy": (0, 255, 0),  # Verde
-                    "sad": (255, 0, 0),  # Azul
-                    "angry": (0, 0, 255),  # Vermelho
-                    "surprise": (255, 255, 0),  # Ciano
-                    "fear": (128, 0, 128),  # Roxo
-                    "disgust": (0, 128, 0),  # Verde escuro
-                    "neutral": (255, 255, 255),  # Branco
+                    "happy": (0, 255, 0),
+                    "sad": (255, 0, 0),
+                    "angry": (0, 0, 255),
+                    "surprise": (255, 255, 0),
+                    "fear": (128, 0, 128),
+                    "disgust": (0, 128, 0),
+                    "neutral": (255, 255, 255),
                 }
 
+                emoji_map = {
+                    "happy": "😊",
+                    "sad": "😔",
+                    "angry": "😠",
+                    "surprise": "😲",
+                    "fear": "😨",
+                    "disgust": "🤢",
+                    "neutral": "😐",
+                }
+
+                emoji = emoji_map.get(dominant_emotion, "😐")
                 emotion_display = emotion_translation.get(dominant_emotion, "NEUTRO")
                 emotion_color = emotion_colors.get(dominant_emotion, (255, 255, 255))
 
-                # Display da EMOCAO principal (centro superior)
-                emotion_text = f"EMOCAO: {emotion_display} ({confidence:.0%})"
-                text_size = cv2.getTextSize(
-                    emotion_text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2
-                )[0]
-                text_x = (w - text_size[0]) // 2
+                # Formata a porcentagem com uma casa decimal
+                emotion_text = f"{emoji} {emotion_display} {confidence:.1%}"
+                # Desenha no canto superior direito com fundo semi-transparente
+                bbox = self.text_drawer.font.getbbox(emotion_text)
+                text_width = bbox[2] - bbox[0] if bbox else len(emotion_text) * 10
+                text_height = bbox[3] - bbox[1] if bbox else 15
 
-                cv2.putText(
+                # Fundo preto semi-transparente atrás do texto
+                overlay2 = frame.copy()
+                cv2.rectangle(
+                    overlay2,
+                    (w - text_width - 15, 35),
+                    (w - 5, 35 + text_height + 10),
+                    (0, 0, 0),
+                    -1,
+                )
+                cv2.addWeighted(overlay2, 0.5, frame, 0.5, 0, frame)
+
+                # Texto
+                frame = self.text_drawer.draw_text(
                     frame,
                     emotion_text,
-                    (text_x, 50),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    1.0,
-                    emotion_color,
-                    2,
+                    (w - text_width - 10, 40),
+                    color=emotion_color,
+                    font_size=16,
                 )
 
-                # Expressões específicas (parte inferior)
-                expr_y = h - 10
-
+            # --- Alertas de cansaço/tristeza (canto inferior esquerdo) ---
+            if (
+                hasattr(self.face_processor, "expression_results")
+                and self.face_processor.expression_results
+            ):
+                expr_results = self.face_processor.expression_results
                 fatigue = expr_results.get("fatigue", {})
+                sadness = expr_results.get("sadness", {})
+
+                alert_x = 10
+                alert_y = h - 10
+                line_height = 20
+                alert_texts = []
+
                 if fatigue.get("score", 0) > 0.3:
                     level = fatigue.get("level", "Baixo")
-                    color = (0, 0, 255) if level == "Alto" else (0, 165, 255)
-                    cv2.putText(
-                        frame,
-                        f"Cansaço: {level}",
-                        (10, expr_y),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
-                        color,
-                        1,
-                    )
-                    expr_y -= 25
+                    alert_texts.append(("cansaco", level, fatigue["score"]))
 
-                sadness = expr_results.get("sadness", {})
                 if sadness.get("score", 0) > 0.3:
                     level = sadness.get("level", "Baixo")
-                    color = (0, 0, 255) if level == "Alto" else (0, 165, 255)
-                    cv2.putText(
-                        frame,
-                        f"Tristeza: {level}",
-                        (10, expr_y),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
-                        color,
-                        1,
-                    )
-                    expr_y -= 25
+                    alert_texts.append(("tristeza", level, sadness["score"]))
 
-            # Alertas recentes (parte inferior direita)
-            if self.expression_alerts:
-                recent_alerts = self.expression_alerts[-2:]  # Últimos 2 alertas
-                alert_y = h - 10
-                for alert in reversed(recent_alerts):
-                    text_size = cv2.getTextSize(
-                        alert, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1
-                    )[0]
-                    cv2.putText(
-                        frame,
-                        alert,
-                        (w - text_size[0] - 10, alert_y),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.4,
-                        (0, 165, 255),
-                        1,
+                if alert_texts:
+                    # Desenha fundo agrupado
+                    max_width = 0
+                    total_height = len(alert_texts) * line_height + 10
+                    for label, level, _ in alert_texts:
+                        text = f"{label}: {level}"
+                        bbox = self.text_drawer.font.getbbox(text)
+                        tw = bbox[2] - bbox[0] if bbox else len(text) * 8
+                        if tw > max_width:
+                            max_width = tw
+
+                    overlay3 = frame.copy()
+                    cv2.rectangle(
+                        overlay3,
+                        (alert_x - 5, alert_y - total_height - 5),
+                        (alert_x + max_width + 10, alert_y + 5),
+                        (0, 0, 0),
+                        -1,
                     )
-                    alert_y -= 20
+                    cv2.addWeighted(overlay3, 0.5, frame, 0.5, 0, frame)
+
+                    for label, level, score in reversed(alert_texts):
+                        color = (0, 0, 255) if level == "Alto" else (0, 165, 255)
+                        text = f"{label}: {level}"
+                        frame = self.text_drawer.draw_text(
+                            frame,
+                            text,
+                            (alert_x, alert_y - line_height),
+                            color=color,
+                            font_size=14,
+                        )
+                        alert_y -= line_height
 
             return frame
+
         except Exception as e:
             logging.debug(f"Erro no overlay: {str(e)}")
             return frame
@@ -389,7 +425,7 @@ class FaceRecognizer:
                         current_time - self.last_alert_time.get(alert_key, 0)
                         > self.alert_cooldown
                     ):
-                        alerts.append("🚨 EMOCAO FORTE: RAIVA DETECTADA")
+                        alerts.append("🚨 EMOCAO FORTE: RAIVA")
                         self.last_alert_time[alert_key] = current_time
 
                 elif dominant_emotion == "fear":
@@ -398,7 +434,7 @@ class FaceRecognizer:
                         current_time - self.last_alert_time.get(alert_key, 0)
                         > self.alert_cooldown
                     ):
-                        alerts.append("🚨 EMOCAO FORTE: MEDO DETECTADO")
+                        alerts.append("🚨 EMOCAO FORTE: MEDO")
                         self.last_alert_time[alert_key] = current_time
 
             # Alertas de cansaço
@@ -411,18 +447,17 @@ class FaceRecognizer:
                     current_time - self.last_alert_time.get(alert_key, 0)
                     > self.alert_cooldown
                 ):
-                    alerts.append("🚨 ALERTA: CANSACO ELEVADO")
+                    alerts.append("🚨 CANSACO ELEVADO")
                     self.last_alert_time[alert_key] = current_time
-                    logging.warning("ALERTA: Nível elevado de cansaço detectado")
 
             # Adiciona alertas à lista
             for alert in alerts:
                 if alert not in self.expression_alerts[-5:]:
                     self.expression_alerts.append(alert)
 
-            # Mantém apenas os últimos 10 alertas
-            if len(self.expression_alerts) > 10:
-                self.expression_alerts = self.expression_alerts[-10:]
+            # Mantém apenas os últimos 5 alertas
+            if len(self.expression_alerts) > 5:
+                self.expression_alerts = self.expression_alerts[-5:]
 
         except Exception as e:
             logging.debug(f"Erro no processamento de alertas: {str(e)}")
@@ -430,7 +465,6 @@ class FaceRecognizer:
     def check_window_closed(self):
         """Verifica se a janela foi fechada pelo X"""
         try:
-            # Tenta obter a propriedade da janela
             window_prop = cv2.getWindowProperty(
                 "Sistema de Reconhecimento Facial", cv2.WND_PROP_VISIBLE
             )
@@ -439,12 +473,11 @@ class FaceRecognizer:
                 return False
             return True
         except:
-            # Se houver erro, assume que a janela foi fechada
             logging.info("Janela fechada pelo usuário")
             return False
 
     def run(self):
-        """Loop principal otimizado para catraca com análise de expressões"""
+        """Loop principal otimizado"""
         try:
             if not self.initialize_system():
                 logging.error("Falha na inicialização do sistema")
@@ -461,11 +494,9 @@ class FaceRecognizer:
 
             while self.running:
                 try:
-                    # Verifica se a janela foi fechada
                     if not self.check_window_closed():
                         break
 
-                    # Controle de FPS
                     current_time = time.time()
                     elapsed = current_time - last_frame_time
                     if elapsed < 1.0 / self.target_fps:
@@ -474,17 +505,14 @@ class FaceRecognizer:
 
                     last_frame_time = current_time
 
-                    # Captura frame
                     frame = self.camera_manager.get_frame()
                     if frame is None:
                         logging.warning("Frame vazio recebido")
                         time.sleep(0.1)
                         continue
 
-                    # Atualiza estatísticas
                     self.performance_stats["frames_processed"] += 1
 
-                    # Verifica se a câmera está tampada
                     if self.face_processor.is_camera_covered(frame):
                         cv2.putText(
                             frame,
@@ -496,27 +524,13 @@ class FaceRecognizer:
                             2,
                         )
                     else:
-                        # Processamento otimizado do frame (inclui reconhecimento e expressões)
                         frame = self.face_processor.process_frame(frame)
+                        # Processa alertas (sempre ativo)
+                        expr_results = self.face_processor.expression_results
+                        if expr_results:
+                            self.performance_stats["expression_analyses"] += 1
+                            self.process_expression_alerts(expr_results)
 
-                        # Processamento adicional de expressões (fallback)
-                        if (
-                            hasattr(self.face_processor, "process_expressions")
-                            and self.face_processor.enable_expression_analysis
-                        ):
-                            try:
-                                frame, expression_results = (
-                                    self.face_processor.process_expressions(frame)
-                                )
-                                if expression_results:
-                                    self.performance_stats["expression_analyses"] += 1
-                                    self.process_expression_alerts(expression_results)
-                            except Exception as e:
-                                logging.debug(
-                                    f"Erro na análise secundária de expressões: {str(e)}"
-                                )
-
-                    # Cálculo de FPS
                     fps_counter += 1
                     if current_time - fps_time >= 1.0:
                         fps = fps_counter / (current_time - fps_time)
@@ -525,29 +539,24 @@ class FaceRecognizer:
                     else:
                         fps = 1.0 / elapsed if elapsed > 0 else 0
 
-                    # Status do sistema
                     status = (
                         "OPERACIONAL"
                         if self.face_processor.model_loaded
                         else "SEM TREINAMENTO"
                     )
 
-                    # Overlay de status
                     frame = self.draw_status_overlay(frame, fps, status)
 
-                    # Exibe frame
                     cv2.imshow("Sistema de Reconhecimento Facial", frame)
 
-                    # Log de estatísticas a cada 30 segundos
                     if current_time - last_statistics_time >= 30:
                         runtime = current_time - self.performance_stats["start_time"]
                         avg_fps = self.performance_stats["frames_processed"] / runtime
                         logging.info(
-                            f"Estatísticas: {avg_fps:.1f} FPS, {self.performance_stats['frames_processed']} frames, {self.performance_stats['expression_analyses']} análises de expressão"
+                            f"Estatisticas: {avg_fps:.1f} FPS, {self.performance_stats['frames_processed']} frames, {self.performance_stats['expression_analyses']} analises"
                         )
                         last_statistics_time = current_time
 
-                    # Controle de teclas (otimizado) - timeout reduzido
                     key = cv2.waitKey(1) & 0xFF
                     if not self.handle_keypress(key):
                         break
@@ -570,58 +579,53 @@ class FaceRecognizer:
             runtime = current_time - self.performance_stats["start_time"]
 
             print("\n" + "=" * 60)
-            print("📊 ESTATÍSTICAS FINAIS")
+            print("📊 ESTATISTICAS FINAIS")
             print("=" * 60)
-            print(f"  ⏰ Tempo total de execução: {runtime:.1f} segundos")
+            print(f"  ⏰ Tempo total de execucao: {runtime:.1f} segundos")
             print(
                 f"  📷 Frames processados: {self.performance_stats['frames_processed']}"
             )
+            if runtime > 0:
+                print(
+                    f"  🎯 FPS medio: {self.performance_stats['frames_processed'] / runtime:.1f}"
+                )
+            else:
+                print("  🎯 FPS medio: N/A")
             print(
-                f"  🎯 FPS médio: {self.performance_stats['frames_processed'] / runtime:.1f}"
-                if runtime > 0
-                else "  🎯 FPS médio: N/A"
-            )
-            print(
-                f"  😊 Análises de expressão: {self.performance_stats['expression_analyses']}"
+                f"  😊 Analises de expressao: {self.performance_stats['expression_analyses']}"
             )
             print(f"  ⚠️  Alertas gerados: {len(self.expression_alerts)}")
 
-            # Estatísticas de expressões
             expr_stats = self.face_processor.get_expression_statistics()
             if expr_stats:
                 print(
-                    f"  📈 Tendência final: {expr_stats.get('trend_analysis', 'N/A')}"
+                    f"  📈 Tendencia final: {expr_stats.get('trend_analysis', 'N/A')}"
                 )
                 print(
-                    f"  🗂️  Amostras no histórico: {expr_stats.get('history_size', 0)}"
+                    f"  🗂️  Amostras no historico: {expr_stats.get('history_size', 0)}"
                 )
 
             print("=" * 60)
 
         except Exception as e:
-            logging.debug(f"Erro ao imprimir estatísticas finais: {str(e)}")
+            logging.debug(f"Erro ao imprimir estatisticas finais: {str(e)}")
 
     def cleanup(self):
-        """Limpeza otimizada de recursos - GARANTE QUE A CÂMERA SERÁ FECHADA"""
+        """Limpeza otimizada de recursos"""
         try:
             self.running = False
-
-            # Imprime estatísticas finais
             self.print_final_statistics()
 
-            # Limpeza dos módulos - ORDEM IMPORTANTE
             logging.info("Iniciando limpeza de recursos...")
 
-            # 1. Fecha a janela primeiro
             if self.window_created:
                 try:
                     cv2.destroyAllWindows()
-                    cv2.waitKey(1)  # Permite que o OpenCV processe o fechamento
+                    cv2.waitKey(1)
                     time.sleep(0.1)
                 except Exception as e:
                     logging.error(f"Erro ao fechar janelas: {str(e)}")
 
-            # 2. Limpa o processador facial
             if hasattr(self, "face_processor"):
                 try:
                     self.face_processor.cleanup()
@@ -629,11 +633,10 @@ class FaceRecognizer:
                 except Exception as e:
                     logging.error(f"Erro ao limpar processador facial: {str(e)}")
 
-            # 3. Limpa a câmera POR ÚLTIMO (mais importante)
             if hasattr(self, "camera_manager"):
                 try:
                     self.camera_manager.cleanup()
-                    time.sleep(0.2)  # Dá tempo para liberar recursos da câmera
+                    time.sleep(0.2)
                 except Exception as e:
                     logging.error(f"Erro ao limpar gerenciador de câmera: {str(e)}")
 
@@ -652,14 +655,11 @@ if __name__ == "__main__":
         print("  ✓ Baixo número de imagens (1-5 por pessoa)")
         print("  ✓ Velocidade de resposta")
         print("  ✓ Confiabilidade em ambiente de catraca")
-        print("  ✓ Análise de expressões em tempo real")
+        print("  ✓ Análise de expressões sempre ativa")
         print("=" * 60)
         print("Controles:")
         print("  Q - Sair do sistema")
-        print("  R - Recarregar modelo de reconhecimento")
-        print("  E - Ativar/desativar análise de expressões")
-        print("  S - Mostrar estatísticas")
-        print("  X - Fechar janela (encerra o sistema)")
+        print("  S - Mostrar estatisticas")
         print("=" * 60)
 
         recognizer = FaceRecognizer()

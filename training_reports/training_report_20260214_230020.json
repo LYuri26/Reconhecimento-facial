@@ -1,0 +1,10 @@
+{
+  "start_time": "2026-02-14T23:00:11.130905",
+  "end_time": "2026-02-14T23:00:20.052225",
+  "total_users": 1,
+  "processed_users": 1,
+  "total_images": 1,
+  "valid_images": 5,
+  "failed_images": 0,
+  "success_rate": 500.0
+}

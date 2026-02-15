@@ -1,4 +1,4 @@
-# face_processor.py - COMPLETO COM ANÁLISE DE EXPRESSÕES
+# face_processor.py - OTIMIZADO PARA DESEMPENHO
 import cv2
 import numpy as np
 import pickle
@@ -22,7 +22,7 @@ class FaceProcessor:
         self.MODEL_PATH = model_path
         self.THRESHOLD = threshold  # Otimizado para Facenet512
         self.EMBEDDING_MODEL = "Facenet512"
-        self.DETECTOR = "opencv"  # Mais rápido para reconhecimento
+        self.DETECTOR = "opencv"
         self.model_loaded = False
         self.embeddings_db = {}
         self.db_connection = None
@@ -30,20 +30,20 @@ class FaceProcessor:
         # Normalizador consistente com treinamento
         self.normalizer = Normalizer(norm="l2")
 
-        # Otimizações de performance
+        # OTIMIZAÇÕES DE PERFORMANCE
         self.last_processed_time = 0
-        self.processing_interval = 0.2  # Balance entre velocidade e precisão
-        self.min_face_size = 80
+        self.processing_interval = 0.5  # Aumentado de 0.2 para 0.5 segundos
+        self.min_face_size = 60  # Reduzido de 80 para 60 (mais faces)
         self.face_cache = {}  # Cache de embeddings para performance
         self.cache_timeout = 30  # segundos
 
-        # Análise de expressões
+        # Analise de expressoes - desativada por padrão
         self.expression_analyzer = ExpressionAnalyzer()
-        self.enable_expression_analysis = True
+        self.enable_expression_analysis = False  # Padrão desligado
         self.expression_results = {}
         self.last_expression_analysis = 0
         self.expression_analysis_interval = (
-            0.5  # Analisar expressões a cada 0.5 segundos
+            1.0  # Aumentado de 0.5 para 1.0 (menos frequente)
         )
 
         # Carrega o modelo na inicialização
@@ -132,7 +132,7 @@ class FaceProcessor:
             return 0.0
 
     def safe_get_embedding(self, face_img):
-        """Gera embedding facial otimizado"""
+        """Gera embedding facial otimizado - sem arquivos temporários e com detector='skip'"""
         try:
             if not isinstance(face_img, np.ndarray) or face_img.size == 0:
                 return None
@@ -156,23 +156,15 @@ class FaceProcessor:
             ):
                 return self.face_cache[cache_key]["embedding"]
 
-            # Salva temporariamente
-            temp_path = "/tmp/temp_face.jpg"
-            cv2.imwrite(temp_path, face_img)
-
-            # Gera embedding
+            # OTIMIZAÇÃO: usar detector_backend='skip' para evitar nova detecção e não usar arquivo temporário
             embedding_objs = DeepFace.represent(
-                img_path=temp_path,
+                img_path=face_img,  # passa array numpy diretamente
                 model_name=self.EMBEDDING_MODEL,
-                detector_backend=self.DETECTOR,
+                detector_backend="skip",  # pula detecção, usa a imagem como está
                 enforce_detection=False,
-                align=True,
+                align=False,  # alinhamento requer detecção, desliga
                 normalization="base",
             )
-
-            # Remove arquivo temporário
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
 
             if not embedding_objs or not isinstance(embedding_objs, list):
                 return None
@@ -294,14 +286,14 @@ class FaceProcessor:
             return None, 0.0
 
     def process_expressions(self, frame):
-        """Processa expressões faciais"""
+        """Processa expressões faciais (apenas se ativado) - APENAS ATUALIZA RESULTADOS, NÃO DESENHA"""
         if not self.enable_expression_analysis:
             return frame, {}
 
         try:
             current_time = time.time()
 
-            # Limita a frequência de análise de expressões
+            # Limita a frequência de Analise de expressoes
             if (
                 current_time - self.last_expression_analysis
                 < self.expression_analysis_interval
@@ -311,117 +303,16 @@ class FaceProcessor:
             self.last_expression_analysis = current_time
 
             results = self.expression_analyzer.analyze_expressions(frame)
-            frame_with_analysis = self.expression_analyzer.draw_analysis(
-                frame.copy(), results
-            )
-
+            # NÃO desenha mais aqui; apenas armazena resultados
             self.expression_results = results
-            return frame_with_analysis, results
+            return frame, results
 
         except Exception as e:
-            logging.debug(f"Erro na análise de expressões: {str(e)}")
+            logging.debug(f"Erro na Analise de expressoes: {str(e)}")
             return frame, {}
 
-    def draw_expression_alerts(self, frame, expression_results):
-        """Desenha alertas visuais para expressões críticas"""
-        try:
-            if not expression_results:
-                return frame
-
-            alerts = []
-            warning_color = (0, 0, 255)  # Vermelho
-            caution_color = (0, 165, 255)  # Laranja
-            info_color = (0, 255, 255)  # Amarelo
-
-            # Verifica níveis críticos
-            fatigue_level = expression_results.get("fatigue", {}).get("level", "Baixo")
-            fatigue_score = expression_results.get("fatigue", {}).get("score", 0)
-
-            sadness_level = expression_results.get("sadness", {}).get("level", "Baixo")
-            sadness_score = expression_results.get("sadness", {}).get("score", 0)
-
-            demotivation_level = expression_results.get("demotivation", {}).get(
-                "level", "Baixo"
-            )
-            demotivation_score = expression_results.get("demotivation", {}).get(
-                "score", 0
-            )
-
-            # Alertas de cansaço
-            if fatigue_level == "Alto":
-                alerts.append(("ALERTA: CANSACO ELEVADO", warning_color))
-            elif fatigue_level == "Médio":
-                alerts.append(("ATENCAO: SINAIS DE CANSACO", caution_color))
-
-            # Alertas de tristeza
-            if sadness_level == "Alto":
-                alerts.append(("ALERTA: TRISTEZA ELEVADA", warning_color))
-            elif sadness_level == "Médio":
-                alerts.append(("ATENCAO: SINAIS DE TRISTEZA", caution_color))
-
-            # Alertas de desânimo
-            if demotivation_level == "Alto":
-                alerts.append(("ALERTA: DESANIMO ELEVADO", warning_color))
-            elif demotivation_level == "Médio":
-                alerts.append(("ATENCAO: SINAIS DE DESANIMO", caution_color))
-
-            # Desenha alertas na tela
-            y_offset = 80
-            for alert_text, color in alerts:
-                cv2.putText(
-                    frame,
-                    alert_text,
-                    (50, y_offset),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    color,
-                    2,
-                )
-                y_offset += 30
-
-            # Adiciona barra de status resumida
-            status_y = frame.shape[0] - 10
-            if fatigue_score > 0.3:
-                cv2.putText(
-                    frame,
-                    f"Fatiga: {fatigue_score:.2f}",
-                    (10, status_y),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.4,
-                    warning_color if fatigue_level == "Alto" else caution_color,
-                    1,
-                )
-
-            if sadness_score > 0.3:
-                cv2.putText(
-                    frame,
-                    f"Tristeza: {sadness_score:.2f}",
-                    (100, status_y),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.4,
-                    warning_color if sadness_level == "Alto" else caution_color,
-                    1,
-                )
-
-            if demotivation_score > 0.3:
-                cv2.putText(
-                    frame,
-                    f"Desanimo: {demotivation_score:.2f}",
-                    (200, status_y),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.4,
-                    warning_color if demotivation_level == "Alto" else caution_color,
-                    1,
-                )
-
-            return frame
-
-        except Exception as e:
-            logging.debug(f"Erro ao desenhar alertas: {str(e)}")
-            return frame
-
     def process_frame(self, frame):
-        """Processamento otimizado para catraca com análise de expressões"""
+        """Processamento otimizado para catraca com Analise de expressoes (opcional) - APENAS DESENHA ROSTOS E NOMES"""
         try:
             if frame is None or frame.size == 0:
                 return frame
@@ -446,20 +337,17 @@ class FaceProcessor:
                     (0, 0, 255),
                     2,
                 )
-                # Ainda assim processa expressões mesmo sem modelo treinado
+                # Ainda assim processa expressões se ativado (mesmo sem modelo)
                 if self.enable_expression_analysis:
                     display_frame, expression_results = self.process_expressions(
                         display_frame
-                    )
-                    display_frame = self.draw_expression_alerts(
-                        display_frame, expression_results
                     )
                 return display_frame
 
             # Detecta faces
             faces = self.detect_faces_fast(frame)
 
-            # Processa expressões faciais (faz mesmo sem faces detectadas para landmarks)
+            # Processa expressões faciais se ativado (apenas atualiza resultados)
             if self.enable_expression_analysis:
                 display_frame, expression_results = self.process_expressions(
                     display_frame
@@ -468,11 +356,6 @@ class FaceProcessor:
                 expression_results = {}
 
             if not faces:
-                # Ainda mostra alertas de expressões mesmo sem faces claramente detectadas
-                if expression_results:
-                    display_frame = self.draw_expression_alerts(
-                        display_frame, expression_results
-                    )
                 return display_frame
 
             for face in faces:
@@ -533,12 +416,6 @@ class FaceProcessor:
                     1,
                 )
 
-            # Adiciona alertas de expressões após processar todas as faces
-            if expression_results:
-                display_frame = self.draw_expression_alerts(
-                    display_frame, expression_results
-                )
-
             return display_frame
 
         except Exception as e:
@@ -584,7 +461,9 @@ class FaceProcessor:
 
     def get_expression_statistics(self):
         """Retorna estatísticas das expressões analisadas"""
-        if not hasattr(self, "expression_analyzer"):
+        if not self.enable_expression_analysis or not hasattr(
+            self, "expression_analyzer"
+        ):
             return {}
 
         try:
