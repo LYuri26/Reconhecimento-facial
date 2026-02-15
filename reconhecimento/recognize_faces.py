@@ -316,7 +316,7 @@ class FaceRecognizer:
                 emotion_color = emotion_colors.get(dominant_emotion, (255, 255, 255))
 
                 # Formata a porcentagem com uma casa decimal
-                emotion_text = f"{emoji} {emotion_display} {confidence:.1%}"
+                emotion_text = f"{emoji} {emotion_display} {confidence/100:.1%}"
                 # Desenha no canto superior direito com fundo semi-transparente
                 bbox = self.text_drawer.font.getbbox(emotion_text)
                 text_width = bbox[2] - bbox[0] if bbox else len(emotion_text) * 10

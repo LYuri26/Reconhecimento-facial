@@ -1,4 +1,4 @@
-# train_model.py - ATUALIZADO
+# train_model.py - VERSÃO MELHORADA COM AUMENTO DE DADOS AGRESSIVO
 import os
 import cv2
 import numpy as np
@@ -12,18 +12,20 @@ import json
 from datetime import datetime
 from sklearn.preprocessing import Normalizer
 import tensorflow as tf
+import random
 
 
 class DeepFaceTrainer:
     def __init__(self):
         self.MIN_IMAGES_PER_USER = 1
-        self.MAX_IMAGES_PER_USER = 5  # Reduzido para refletir a realidade
+        self.MAX_IMAGES_PER_USER = 5
         self.IMAGE_SIZE = (160, 160)
         self.MIN_FACE_SIZE = 80
-        self.EMBEDDING_MODEL = "Facenet512"  # Mantido por ser um dos melhores
-        self.DETECTOR = "mtcnn"  # mais estável
+        self.EMBEDDING_MODEL = "Facenet512"
+        self.DETECTOR = "mtcnn"
         self.THRESHOLD_BLUR = 25
         self.ENFORCE_DETECTION = False
+        self.AUGMENTATION_MULTIPLIER = 30  # Número de variações por imagem original
 
         self.SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
         self.PROJECT_ROOT = os.path.dirname(self.SCRIPT_DIR)
@@ -125,11 +127,9 @@ class DeepFaceTrainer:
             if img is None:
                 return False, "Não foi possível ler a imagem"
 
-            # Verifica tamanho mínimo
             if img.shape[0] < self.MIN_FACE_SIZE or img.shape[1] < self.MIN_FACE_SIZE:
                 return False, "Imagem muito pequena"
 
-            # Verifica se a imagem está muito escura
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             if np.mean(gray) < 15:
                 return False, "Imagem muito escura"
@@ -139,74 +139,103 @@ class DeepFaceTrainer:
             return False, f"Erro na validação: {str(e)}"
 
     def augment_image(self, img):
-        """Aumento de dados para melhorar reconhecimento com poucas imagens"""
+        """
+        Gera múltiplas variações da imagem para aumentar o conjunto de treino.
+        Retorna uma lista de imagens aumentadas (incluindo a original).
+        """
         augmented = []
-
         try:
-            # Imagem original
+            # Original
             augmented.append(img)
 
             # Flip horizontal
-            augmented.append(cv2.flip(img, 1))
+            flipped = cv2.flip(img, 1)
+            augmented.append(flipped)
 
-            # Pequenas rotações
+            # Rotações
             rows, cols = img.shape[:2]
-            for angle in [-5, 5]:
+            for angle in [-10, -5, 5, 10]:
                 M = cv2.getRotationMatrix2D((cols / 2, rows / 2), angle, 1)
                 rotated = cv2.warpAffine(img, M, (cols, rows))
                 augmented.append(rotated)
 
-            # Pequeno zoom
-            scale = 1.1
-            M = cv2.getRotationMatrix2D((cols / 2, rows / 2), 0, scale)
-            zoomed = cv2.warpAffine(img, M, (cols, rows))
-            augmented.append(zoomed)
+            # Zoom
+            for scale in [0.9, 0.95, 1.05, 1.1]:
+                M = cv2.getRotationMatrix2D((cols / 2, rows / 2), 0, scale)
+                zoomed = cv2.warpAffine(img, M, (cols, rows))
+                augmented.append(zoomed)
+
+            # Translação
+            for tx, ty in [(-10, 0), (10, 0), (0, -10), (0, 10)]:
+                M = np.float32([[1, 0, tx], [0, 1, ty]])
+                translated = cv2.warpAffine(img, M, (cols, rows))
+                augmented.append(translated)
+
+            # Brilho e contraste
+            for alpha in [0.8, 0.9, 1.1, 1.2]:
+                for beta in [-20, -10, 10, 20]:
+                    adjusted = cv2.convertScaleAbs(img, alpha=alpha, beta=beta)
+                    augmented.append(adjusted)
+
+            # Ruído gaussiano
+            for sigma in [5, 10, 15]:
+                noise = np.random.normal(0, sigma, img.shape).astype(np.uint8)
+                noisy = cv2.add(img, noise)
+                augmented.append(noisy)
+
+            # Equalização de histograma
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            eq_gray = cv2.equalizeHist(gray)
+            eq_bgr = cv2.cvtColor(eq_gray, cv2.COLOR_GRAY2BGR)
+            augmented.append(eq_bgr)
 
         except Exception as e:
-            logging.debug(f"Aumento de dados parcialmente falhou: {str(e)}")
-            augmented = [img]  # Fallback para imagem original
+            logging.debug(f"Erro no aumento de dados: {str(e)}")
+            augmented = [img]  # fallback
+
+        # Limita ao número máximo desejado (embaralha e pega os primeiros)
+        if len(augmented) > self.AUGMENTATION_MULTIPLIER:
+            random.shuffle(augmented)
+            augmented = augmented[: self.AUGMENTATION_MULTIPLIER]
 
         return augmented
 
-    def generate_embedding(self, img_path):
+    def generate_embedding(self, img_input):
+        """
+        Gera embedding a partir de um caminho de arquivo ou array numpy.
+        """
         try:
-            full_path = os.path.join(self.UPLOADS_DIR, img_path.replace("\\", "/"))
+            # Se for string (caminho), valida a imagem
+            if isinstance(img_input, str):
+                if not os.path.exists(img_input):
+                    logging.warning(
+                        f"Arquivo não encontrado: {os.path.basename(img_input)}"
+                    )
+                    return None
+                is_valid, msg = self.validate_image(img_input)
+                if not is_valid:
+                    logging.warning(f"Imagem inválida: {msg}")
+                    return None
 
-            if not os.path.exists(full_path):
-                logging.warning(
-                    f"Arquivo não encontrado: {os.path.basename(full_path)}"
-                )
-                return None
+            embedding_objs = DeepFace.represent(
+                img_path=img_input,
+                model_name=self.EMBEDDING_MODEL,
+                detector_backend=self.DETECTOR,
+                enforce_detection=self.ENFORCE_DETECTION,
+                align=True,
+                normalization="base",
+            )
 
-            is_valid, msg = self.validate_image(full_path)
-            if not is_valid:
-                logging.warning(f"Imagem inválida: {msg}")
-                return None
-
-            # Usa detector mais preciso para treinamento
-            try:
-                embedding_objs = DeepFace.represent(
-                    img_path=full_path,
-                    model_name=self.EMBEDDING_MODEL,
-                    detector_backend=self.DETECTOR,
-                    enforce_detection=self.ENFORCE_DETECTION,
-                    align=True,
-                    normalization="base",
-                )
-
-                if embedding_objs and len(embedding_objs) > 0:
-                    embedding = np.array(embedding_objs[0]["embedding"]).flatten()
-                    # Normalização L2 consistente
-                    embedding = self.normalizer.transform([embedding])[0]
-                    logging.info("✓ Embedding gerado")
-                    return embedding
-
-            except Exception as e:
-                logging.warning(f"Detector {self.DETECTOR} falhou: {str(e)}")
+            if embedding_objs and len(embedding_objs) > 0:
+                embedding = np.array(embedding_objs[0]["embedding"]).flatten()
+                # Normalização L2
+                embedding = self.normalizer.transform([embedding])[0]
+                return embedding
+            else:
                 return None
 
         except Exception as e:
-            logging.error(f"Erro ao processar {img_path}: {str(e)}")
+            logging.warning(f"Erro ao gerar embedding: {str(e)}")
             return None
 
     def generate_embeddings_for_user(self, user_id, user_data):
@@ -217,54 +246,47 @@ class DeepFaceTrainer:
         logging.info(f"Total de imagens: {len(user_data['images'])}")
 
         for i, img_path in enumerate(user_data["images"]):
-            logging.info(f"Processando imagem {i+1}/{len(user_data['images'])}")
+            full_path = os.path.join(self.UPLOADS_DIR, img_path.replace("\\", "/"))
+            logging.info(
+                f"Processando imagem {i+1}/{len(user_data['images'])}: {full_path}"
+            )
 
-            embedding = self.generate_embedding(img_path)
+            # Carrega a imagem original
+            img = cv2.imread(full_path)
+            if img is None:
+                self.training_stats["failed_images"] += 1
+                logging.warning(f"✗ Imagem {i+1}: Não foi possível ler")
+                continue
 
-            if embedding is not None:
-                # Adiciona embedding original
-                embeddings.append(embedding)
+            # Gera embedding da imagem original
+            emb_original = self.generate_embedding(full_path)
+            if emb_original is not None:
+                embeddings.append(emb_original)
                 self.training_stats["valid_images"] += 1
-                logging.info(f"✓ Imagem {i+1}: Embedding gerado")
-
-                # Aumento de dados para imagens únicas
-                if len(user_data["images"]) == 1:  # Apenas para casos de 1 imagem
-                    try:
-                        full_path = os.path.join(
-                            self.UPLOADS_DIR, img_path.replace("\\", "/")
-                        )
-                        img = cv2.imread(full_path)
-                        if img is not None:
-                            augmented_images = self.augment_image(img)
-
-                            # Gera embeddings para imagens aumentadas
-                            for j, aug_img in enumerate(
-                                augmented_images[1:], 1
-                            ):  # Pula a original
-                                temp_path = (
-                                    f"/tmp/aug_{j}_{os.path.basename(full_path)}"
-                                )
-                                cv2.imwrite(temp_path, aug_img)
-
-                                aug_embedding = self.generate_embedding(temp_path)
-                                if aug_embedding is not None:
-                                    embeddings.append(aug_embedding)
-                                    self.training_stats["valid_images"] += 1
-                                    logging.info(
-                                        f"✓ Imagem {i+1}: Embedding aumentado {j} gerado"
-                                    )
-
-                                # Remove arquivo temporário
-                                if os.path.exists(temp_path):
-                                    os.remove(temp_path)
-                    except Exception as e:
-                        logging.debug(f"Aumento de dados falhou: {str(e)}")
+                logging.info(f"✓ Imagem {i+1}: Embedding original gerado")
             else:
                 self.training_stats["failed_images"] += 1
-                logging.warning(f"✗ Imagem {i+1}: Falha")
+                logging.warning(f"✗ Imagem {i+1}: Falha no embedding original")
+                continue  # se a original falhar, não adianta aumentar
+
+            # Gera variações aumentadas
+            augmented_images = self.augment_image(img)
+
+            # Gera embeddings para cada variação
+            for j, aug_img in enumerate(augmented_images):
+                # Pula a original (já processada)
+                if j == 0 and np.array_equal(aug_img, img):
+                    continue
+                emb_aug = self.generate_embedding(aug_img)  # passa array numpy
+                if emb_aug is not None:
+                    embeddings.append(emb_aug)
+                    self.training_stats["valid_images"] += 1
+                    logging.debug(f"✓ Imagem {i+1}: Embedding aumentado {j} gerado")
+                else:
+                    logging.debug(f"✗ Imagem {i+1}: Embedding aumentado {j} falhou")
 
         if embeddings:
-            # Calcula embedding médio normalizado
+            # Calcula embedding médio normalizado (opcional, mas útil)
             avg_embedding = np.mean(embeddings, axis=0)
             avg_embedding = self.normalizer.transform([avg_embedding])[0]
 
@@ -275,7 +297,7 @@ class DeepFaceTrainer:
                 "sobrenome": user_data["sobrenome"],
                 "embeddings": [e.tolist() for e in embeddings],
                 "embedding": avg_embedding.tolist(),
-                "embedding_count": len(embeddings),  # Para debug
+                "embedding_count": len(embeddings),
             }
         else:
             logging.warning(f"✗ {user_name}: Nenhum embedding válido")
@@ -294,11 +316,12 @@ class DeepFaceTrainer:
             "reverse_label_map": self.reverse_label_map,
             "training_stats": self.training_stats,
             "model_info": {
-                "version": "4.0",  # Atualizado
+                "version": "5.0",  # versão com aumento agressivo
                 "training_date": datetime.now().isoformat(),
                 "embedding_model": self.EMBEDDING_MODEL,
                 "detector": self.DETECTOR,
                 "normalization": "l2",
+                "augmentation_multiplier": self.AUGMENTATION_MULTIPLIER,
             },
         }
 
@@ -365,7 +388,7 @@ class DeepFaceTrainer:
 
     def train(self):
         self.training_stats["start_time"] = datetime.now()
-        logging.info("\n=== INICIANDO TREINAMENTO OTIMIZADO PARA POUCAS IMAGENS ===")
+        logging.info("\n=== INICIANDO TREINAMENTO COM AUMENTO DE DADOS AGRESSIVO ===")
 
         if not os.path.exists(self.UPLOADS_DIR) or not os.listdir(self.UPLOADS_DIR):
             logging.error("Pasta uploads não encontrada ou vazia")
@@ -379,7 +402,6 @@ class DeepFaceTrainer:
         logging.info(f"Usuários para processar: {len(user_images)}")
         self.training_stats["total_users"] = len(user_images)
 
-        # Processar usuários
         processed_users = 0
         for user_id, user_data in user_images.items():
             self.label_map[user_id] = processed_users
@@ -407,34 +429,37 @@ class DeepFaceTrainer:
         ).total_seconds()
 
         print("\n" + "=" * 60)
-        print("📊 RESUMO DO TREINAMENTO OTIMIZADO")
+        print("📊 RESUMO DO TREINAMENTO (COM AUMENTO DE DADOS)")
         print("=" * 60)
         print(f"   ⏰ Tempo total: {total_time:.1f} segundos")
         print(
             f"   👥 Usuários: {self.training_stats['processed_users']}/{self.training_stats['total_users']}"
         )
-        print(f"   📷 Imagens válidas: {self.training_stats['valid_images']}")
+        print(
+            f"   📷 Imagens válidas (incluindo aumentadas): {self.training_stats['valid_images']}"
+        )
         print(f"   ❌ Imagens falhas: {self.training_stats['failed_images']}")
 
         if self.training_stats["total_images"] > 0:
             success_rate = (
                 self.training_stats["valid_images"]
                 / self.training_stats["total_images"]
-            ) * 100
-            print(f"   🎯 Taxa de sucesso: {success_rate:.1f}%")
+                * 100
+            )
+            print(f"   🎯 Taxa de sucesso (por imagem original): {success_rate:.1f}%")
 
         print("=" * 60)
 
         for user_id, data in self.embeddings_db.items():
             print(
-                f"   ✅ {data['nome']}: {data['embedding_count']} embeddings (com aumento)"
+                f"   ✅ {data['nome']}: {data['embedding_count']} embeddings (a partir de {len(user_images[user_id]['images'])} imagem(ns))"
             )
 
 
 if __name__ == "__main__":
     try:
         print("=" * 60)
-        print("🤖 INICIANDO TREINAMENTO FACIAL OTIMIZADO")
+        print("🤖 INICIANDO TREINAMENTO FACIAL COM AUMENTO DE DADOS")
         print("=" * 60)
 
         trainer = DeepFaceTrainer()
