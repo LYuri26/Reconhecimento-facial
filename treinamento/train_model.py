@@ -57,6 +57,7 @@ class DeepFaceTrainer:
             "database": "reconhecimento_facial",
         }
 
+        self.user_images = {}
         self.embeddings_db = {}
         self.label_map = {}
         self.reverse_label_map = {}
@@ -394,16 +395,16 @@ class DeepFaceTrainer:
             logging.error("Pasta uploads não encontrada ou vazia")
             return False
 
-        user_images = self.get_user_images()
-        if not user_images:
+        self.user_images = self.get_user_images()
+        if not self.user_images:
             logging.error("Nenhuma imagem encontrada")
             return False
 
-        logging.info(f"Usuários para processar: {len(user_images)}")
-        self.training_stats["total_users"] = len(user_images)
+        logging.info(f"Usuários para processar: {len(self.user_images)}")
+        self.training_stats["total_users"] = len(self.user_images)
 
         processed_users = 0
-        for user_id, user_data in user_images.items():
+        for user_id, user_data in self.user_images.items():
             self.label_map[user_id] = processed_users
             self.reverse_label_map[processed_users] = user_id
 
@@ -424,36 +425,121 @@ class DeepFaceTrainer:
         return self.save_model()
 
     def print_summary(self):
+        """
+        Exibe um relatório completo do treinamento no terminal.
+        """
+
+        if not self.training_stats["start_time"] or not self.training_stats["end_time"]:
+            print("❌ Treinamento não finalizado corretamente.")
+            return
+
         total_time = (
             self.training_stats["end_time"] - self.training_stats["start_time"]
         ).total_seconds()
 
-        print("\n" + "=" * 60)
-        print("📊 RESUMO DO TREINAMENTO (COM AUMENTO DE DADOS)")
-        print("=" * 60)
-        print(f"   ⏰ Tempo total: {total_time:.1f} segundos")
-        print(
-            f"   👥 Usuários: {self.training_stats['processed_users']}/{self.training_stats['total_users']}"
-        )
-        print(
-            f"   📷 Imagens válidas (incluindo aumentadas): {self.training_stats['valid_images']}"
-        )
-        print(f"   ❌ Imagens falhas: {self.training_stats['failed_images']}")
+        print("\n" + "=" * 75)
+        print("📊 RELATÓRIO FINAL DO TREINAMENTO DE RECONHECIMENTO FACIAL")
+        print("=" * 75)
 
-        if self.training_stats["total_images"] > 0:
-            success_rate = (
-                self.training_stats["valid_images"]
-                / self.training_stats["total_images"]
-                * 100
-            )
-            print(f"   🎯 Taxa de sucesso (por imagem original): {success_rate:.1f}%")
+        # ------------------------------------------------------------------
+        # Informações gerais
+        # ------------------------------------------------------------------
+        print("\n🔹 INFORMAÇÕES GERAIS")
 
-        print("=" * 60)
+        print(f"   ⏰ Tempo total de execução : {total_time:.2f} segundos")
+        print(f"   📅 Início do treinamento  : {self.training_stats['start_time']}")
+        print(f"   📅 Fim do treinamento     : {self.training_stats['end_time']}")
+
+        print(f"   🧠 Modelo de Embedding    : {self.EMBEDDING_MODEL}")
+        print(f"   🔍 Detector Facial        : {self.DETECTOR}")
+        print(f"   📐 Normalização           : L2 (sklearn)")
+        print(
+            f"   🔁 Aumento de Dados        : {self.AUGMENTATION_MULTIPLIER} variações/imagem"
+        )
+
+        # ------------------------------------------------------------------
+        # Estatísticas globais
+        # ------------------------------------------------------------------
+        print("\n🔹 ESTATÍSTICAS GERAIS")
+
+        total_users = self.training_stats["total_users"]
+        processed_users = self.training_stats["processed_users"]
+        total_images = self.training_stats["total_images"]
+        valid_images = self.training_stats["valid_images"]
+        failed_images = self.training_stats["failed_images"]
+
+        print(f"   👥 Usuários encontrados   : {total_users}")
+        print(f"   ✅ Usuários processados   : {processed_users}")
+
+        print(f"   📷 Imagens originais      : {total_images}")
+        print(f"   ✔️  Embeddings válidos     : {valid_images}")
+        print(f"   ❌ Falhas de processamento: {failed_images}")
+
+        if total_images > 0:
+            success_rate = (valid_images / total_images) * 100
+            print(f"   🎯 Taxa de sucesso         : {success_rate:.2f}%")
+
+        # ------------------------------------------------------------------
+        # Estatísticas por usuário
+        # ------------------------------------------------------------------
+        print("\n🔹 DESEMPENHO POR USUÁRIO")
+
+        print("-" * 75)
 
         for user_id, data in self.embeddings_db.items():
-            print(
-                f"   ✅ {data['nome']}: {data['embedding_count']} embeddings (a partir de {len(user_images[user_id]['images'])} imagem(ns))"
-            )
+
+            nome = f"{data['nome']} {data['sobrenome']}"
+            total_imgs_user = len(self.user_images[user_id]["images"])
+            total_embs = data["embedding_count"]
+
+            avg_embs = total_embs / total_imgs_user if total_imgs_user > 0 else 0
+
+            print(f"👤 Usuário: {nome}")
+            print(f"   🆔 ID                : {user_id}")
+            print(f"   📁 Imagens originais : {total_imgs_user}")
+            print(f"   🧬 Embeddings        : {total_embs}")
+            print(f"   📊 Média por imagem  : {avg_embs:.1f}")
+            print("-" * 75)
+
+        # ------------------------------------------------------------------
+        # Diagnóstico do treinamento
+        # ------------------------------------------------------------------
+        print("\n🔹 DIAGNÓSTICO AUTOMÁTICO")
+
+        if processed_users == 0:
+            print("   ❌ Nenhum usuário foi treinado.")
+            print("   👉 Verifique banco de dados e diretório uploads.")
+
+        elif processed_users < total_users:
+            print("   ⚠️  Nem todos os usuários foram processados.")
+            print("   👉 Algumas imagens podem estar inválidas.")
+
+        else:
+            print("   ✅ Todos os usuários foram processados com sucesso.")
+
+        if failed_images > valid_images:
+            print("   ⚠️  Alto índice de falhas detectado.")
+            print("   👉 Verifique iluminação, enquadramento e resolução.")
+
+        if valid_images < 100:
+            print("   ⚠️  Base de dados pequena.")
+            print("   👉 Recomenda-se mais imagens por usuário.")
+
+        # ------------------------------------------------------------------
+        # Status final
+        # ------------------------------------------------------------------
+        print("\n🔹 STATUS FINAL")
+
+        model_size = 0
+        if os.path.exists(self.MODEL_PATH):
+            model_size = os.path.getsize(self.MODEL_PATH) / (1024 * 1024)
+
+        print(f"   💾 Modelo salvo em : {self.MODEL_PATH}")
+        print(f"   📦 Tamanho        : {model_size:.2f} MB")
+
+        print("\n" + "=" * 75)
+        print("✅ TREINAMENTO FINALIZADO COM SUCESSO")
+        print("=" * 75)
 
 
 if __name__ == "__main__":
