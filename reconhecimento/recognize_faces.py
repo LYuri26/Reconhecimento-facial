@@ -1,4 +1,4 @@
-# recognize_faces.py - INTERFACE SIMPLIFICADA E OTIMIZADA
+# recognize_faces.py - INTERFACE OTIMIZADA COM RASTREAMENTO DE UM ÚNICO ROSTO
 import cv2
 import time
 import logging
@@ -88,14 +88,13 @@ class UnicodeTextDrawer:
 
 class FaceRecognizer:
     def __init__(self):
-        # Configurações otimizadas para catraca
+        # Configurações de qualidade/desempenho equilibradas
         self.rtsp_url = (
             "rtsp://admin:Evento0128@192.168.1.101:559/Streaming/Channels/101"
         )
-        # Resolução reduzida para desempenho
-        self.width = 320
-        self.height = 240
-        self.target_fps = 8
+        self.width = 640          # Aumentado para melhor qualidade
+        self.height = 480
+        self.target_fps = 15      # FPS mais suave
 
         # Inicializa os módulos
         self.camera_manager = CameraManager(
@@ -111,7 +110,7 @@ class FaceRecognizer:
         self.running = False
         self.window_created = False
         self.last_recognition_time = 0
-        self.recognition_cooldown = 2  # segundos entre reconhecimentos
+        self.recognition_cooldown = 1  # Reduzido devido ao tracking contínuo
 
         # Estatísticas e monitoramento
         self.expression_alerts = []
@@ -175,7 +174,7 @@ class FaceRecognizer:
         """Cria janela de exibição otimizada"""
         try:
             cv2.namedWindow("Sistema de Reconhecimento Facial", cv2.WINDOW_NORMAL)
-            cv2.resizeWindow("Sistema de Reconhecimento Facial", 640, 480)
+            cv2.resizeWindow("Sistema de Reconhecimento Facial", 960, 720)  # Maior para melhor visualização
             self.window_created = True
             return True
         except Exception as e:
@@ -231,15 +230,15 @@ class FaceRecognizer:
 
     def draw_status_overlay(self, frame, fps, status):
         """
-        Desenha informações mínimas na tela de forma discreta:
-        - Barra superior fina com status e FPS
-        - Canto superior direito: emoção dominante (se disponível)
-        - Canto inferior esquerdo: alertas de cansaço/tristeza (se relevantes)
+        Desenha informações na tela de forma discreta:
+        - Barra superior com status e FPS
+        - Emoção dominante (canto superior direito) se houver rosto alvo
+        - Alertas de cansaço/tristeza (canto inferior esquerdo) se houver rosto alvo
         """
         try:
             h, w = frame.shape[:2]
 
-            # --- Barra superior semi-transparente muito fina ---
+            # --- Barra superior semi-transparente fina ---
             overlay = frame.copy()
             cv2.rectangle(overlay, (0, 0), (w, 30), (0, 0, 0), -1)
             cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
@@ -269,17 +268,16 @@ class FaceRecognizer:
                 1,
             )
 
-            # --- Emoção dominante (canto superior direito, fora da barra) ---
+            # --- Emoção dominante (canto superior direito) apenas se houver rosto alvo ---
             if (
-                hasattr(self.face_processor, "expression_results")
+                self.face_processor.tracking["active"]
                 and self.face_processor.expression_results
             ):
-                expr_results = self.face_processor.expression_results
-                basic_emotions = expr_results.get("basic_emotions", {})
-                dominant_emotion = basic_emotions.get("dominant_emotion", "neutral")
-                confidence = basic_emotions.get("confidence", 0)
+                expr = self.face_processor.expression_results
+                basic = expr.get("basic_emotions", {})
+                dominant = basic.get("dominant_emotion", "neutral")
+                conf = basic.get("confidence", 0)
 
-                # Tradução para português sem acentos
                 emotion_translation = {
                     "happy": "ALEGRE",
                     "sad": "TRISTE",
@@ -289,18 +287,6 @@ class FaceRecognizer:
                     "disgust": "DESGOSTO",
                     "neutral": "NEUTRO",
                 }
-
-                # Cores para cada emoção
-                emotion_colors = {
-                    "happy": (0, 255, 0),
-                    "sad": (255, 0, 0),
-                    "angry": (0, 0, 255),
-                    "surprise": (255, 255, 0),
-                    "fear": (128, 0, 128),
-                    "disgust": (0, 128, 0),
-                    "neutral": (255, 255, 255),
-                }
-
                 emoji_map = {
                     "happy": "😊",
                     "sad": "😔",
@@ -310,87 +296,72 @@ class FaceRecognizer:
                     "disgust": "🤢",
                     "neutral": "😐",
                 }
+                emoji = emoji_map.get(dominant, "😐")
+                emotion_display = emotion_translation.get(dominant, "NEUTRO")
+                emotion_text = f"{emoji} {emotion_display} {conf/100:.1%}"
 
-                emoji = emoji_map.get(dominant_emotion, "😐")
-                emotion_display = emotion_translation.get(dominant_emotion, "NEUTRO")
-                emotion_color = emotion_colors.get(dominant_emotion, (255, 255, 255))
-
-                # Formata a porcentagem com uma casa decimal
-                emotion_text = f"{emoji} {emotion_display} {confidence/100:.1%}"
-                # Desenha no canto superior direito com fundo semi-transparente
+                # Fundo semi-transparente
                 bbox = self.text_drawer.font.getbbox(emotion_text)
-                text_width = bbox[2] - bbox[0] if bbox else len(emotion_text) * 10
-                text_height = bbox[3] - bbox[1] if bbox else 15
-
-                # Fundo preto semi-transparente atrás do texto
+                text_w = bbox[2] - bbox[0] if bbox else len(emotion_text) * 10
+                text_h = bbox[3] - bbox[1] if bbox else 15
                 overlay2 = frame.copy()
                 cv2.rectangle(
                     overlay2,
-                    (w - text_width - 15, 35),
-                    (w - 5, 35 + text_height + 10),
+                    (w - text_w - 15, 35),
+                    (w - 5, 35 + text_h + 10),
                     (0, 0, 0),
                     -1,
                 )
                 cv2.addWeighted(overlay2, 0.5, frame, 0.5, 0, frame)
 
-                # Texto
                 frame = self.text_drawer.draw_text(
                     frame,
                     emotion_text,
-                    (w - text_width - 10, 40),
-                    color=emotion_color,
+                    (w - text_w - 10, 40),
+                    color=(255, 255, 255),
                     font_size=16,
                 )
 
-            # --- Alertas de cansaço/tristeza (canto inferior esquerdo) ---
+            # --- Alertas de cansaço/tristeza (canto inferior esquerdo) apenas se houver rosto alvo ---
             if (
-                hasattr(self.face_processor, "expression_results")
+                self.face_processor.tracking["active"]
                 and self.face_processor.expression_results
             ):
-                expr_results = self.face_processor.expression_results
-                fatigue = expr_results.get("fatigue", {})
-                sadness = expr_results.get("sadness", {})
-
-                alert_x = 10
-                alert_y = h - 10
+                expr = self.face_processor.expression_results
+                fatigue = expr.get("fatigue", {})
+                sadness = expr.get("sadness", {})
+                alert_x, alert_y = 10, h - 10
                 line_height = 20
-                alert_texts = []
-
+                alerts = []
                 if fatigue.get("score", 0) > 0.3:
-                    level = fatigue.get("level", "Baixo")
-                    alert_texts.append(("cansaco", level, fatigue["score"]))
-
+                    alerts.append(("cansaco", fatigue.get("level", "Baixo")))
                 if sadness.get("score", 0) > 0.3:
-                    level = sadness.get("level", "Baixo")
-                    alert_texts.append(("tristeza", level, sadness["score"]))
+                    alerts.append(("tristeza", sadness.get("level", "Baixo")))
 
-                if alert_texts:
+                if alerts:
                     # Desenha fundo agrupado
-                    max_width = 0
-                    total_height = len(alert_texts) * line_height + 10
-                    for label, level, _ in alert_texts:
+                    max_w = 0
+                    for label, level in alerts:
                         text = f"{label}: {level}"
                         bbox = self.text_drawer.font.getbbox(text)
                         tw = bbox[2] - bbox[0] if bbox else len(text) * 8
-                        if tw > max_width:
-                            max_width = tw
-
+                        if tw > max_w:
+                            max_w = tw
                     overlay3 = frame.copy()
                     cv2.rectangle(
                         overlay3,
-                        (alert_x - 5, alert_y - total_height - 5),
-                        (alert_x + max_width + 10, alert_y + 5),
+                        (alert_x - 5, alert_y - len(alerts) * line_height - 5),
+                        (alert_x + max_w + 10, alert_y + 5),
                         (0, 0, 0),
                         -1,
                     )
                     cv2.addWeighted(overlay3, 0.5, frame, 0.5, 0, frame)
 
-                    for label, level, score in reversed(alert_texts):
+                    for label, level in reversed(alerts):
                         color = (0, 0, 255) if level == "Alto" else (0, 165, 255)
-                        text = f"{label}: {level}"
                         frame = self.text_drawer.draw_text(
                             frame,
-                            text,
+                            f"{label}: {level}",
                             (alert_x, alert_y - line_height),
                             color=color,
                             font_size=14,
@@ -398,13 +369,12 @@ class FaceRecognizer:
                         alert_y -= line_height
 
             return frame
-
         except Exception as e:
             logging.debug(f"Erro no overlay: {str(e)}")
             return frame
 
     def process_expression_alerts(self, expression_results):
-        """Processa alertas de expressões e emoções críticas"""
+        """Processa alertas de expressões e emoções críticas (apenas do rosto alvo)"""
         try:
             if not expression_results:
                 return
@@ -525,7 +495,7 @@ class FaceRecognizer:
                         )
                     else:
                         frame = self.face_processor.process_frame(frame)
-                        # Processa alertas (sempre ativo)
+                        # Processa alertas (apenas se houver resultados do rosto alvo)
                         expr_results = self.face_processor.expression_results
                         if expr_results:
                             self.performance_stats["expression_analyses"] += 1
@@ -654,8 +624,9 @@ if __name__ == "__main__":
         print("Configurações otimizadas para:")
         print("  ✓ Baixo número de imagens (1-5 por pessoa)")
         print("  ✓ Velocidade de resposta")
-        print("  ✓ Confiabilidade em ambiente de catraca")
-        print("  ✓ Análise de expressões sempre ativa")
+        print("  ✓ Rastreamento de um único rosto com prioridade")
+        print("  ✓ Análise de expressões ativa apenas quando há rosto")
+        print("  ✓ Resolução: 640x480, FPS: 15")
         print("=" * 60)
         print("Controles:")
         print("  Q - Sair do sistema")

@@ -1,4 +1,4 @@
-# face_processor.py - VERSÃO CORRIGIDA PARA RECONHECIMENTO COM POUCAS IMAGENS
+# face_processor.py - VERSÃO COMPLETA COM RASTREAMENTO DE UM ÚNICO ROSTO E PRIORIDADE
 import cv2
 import numpy as np
 import pickle
@@ -23,11 +23,11 @@ except ImportError:
 class FaceProcessor:
     def __init__(self, model_path="model/deepface_model.pkl", threshold=0.4):
         """
-        Inicializa o processador facial.
+        Inicializa o processador facial com rastreamento de um único rosto.
 
         Args:
             model_path: Caminho para o modelo treinado (pickle)
-            threshold: Limiar de similaridade (reduzido para 0.4)
+            threshold: Limiar de similaridade
         """
         self.MODEL_PATH = model_path
         self.THRESHOLD = threshold
@@ -42,9 +42,7 @@ class FaceProcessor:
 
         # OTIMIZAÇÕES DE PERFORMANCE
         self.last_processed_time = 0
-        self.processing_interval = (
-            1.0  # Intervalo entre processamentos (para dar tempo ao MTCNN)
-        )
+        self.processing_interval = 0.5  # Intervalo entre processamentos (0.5s)
         self.min_face_size = 80
         self.face_cache = {}  # Cache de embeddings para performance
         self.cache_timeout = 30  # segundos
@@ -57,7 +55,21 @@ class FaceProcessor:
         self.enable_expression_analysis = False
         self.expression_results = {}
         self.last_expression_analysis = 0
-        self.expression_analysis_interval = 1.0
+        self.expression_analysis_interval = 1.0  # Análise de expressão a cada 1s
+
+        # ========== RASTREAMENTO DE UM ÚNICO ROSTO ==========
+        self.tracking = {
+            'active': False,           # Há um rosto sendo rastreado?
+            'bbox': None,               # (x, y, w, h) da última detecção
+            'user_id': None,            # ID do usuário se reconhecido
+            'similarity': 0.0,           # Similaridade do reconhecimento
+            'priority': None,            # 'registered' ou 'unknown'
+            'lost_frames': 0,            # Número de frames sem detecção
+            'first_seen': 0,              # Timestamp da primeira aparição
+            'last_seen': 0,               # Timestamp da última atualização
+        }
+        self.max_lost_frames = 30        # Perde o rastreamento após 30 frames sem detecção
+        self.iou_threshold = 0.3          # IOU mínimo para associar ao mesmo rosto
 
         # Carrega o modelo na inicialização
         self.load_model()
@@ -143,7 +155,6 @@ class FaceProcessor:
             emb1 = np.array(emb1, dtype=np.float32).flatten()
             emb2 = np.array(emb2, dtype=np.float32).flatten()
 
-            # Verifica se os embeddings são válidos
             if emb1.size == 0 or emb2.size == 0:
                 return 0.0
             norm1 = np.linalg.norm(emb1)
@@ -151,9 +162,7 @@ class FaceProcessor:
             if norm1 == 0 or norm2 == 0:
                 return 0.0
 
-            # Similaridade cosseno
             similarity = np.dot(emb1, emb2) / (norm1 * norm2)
-            # Garantir que está no intervalo [0,1] (para vetores normalizados, o cosseno pode ser negativo)
             similarity = max(0.0, min(1.0, similarity))
             return float(similarity)
 
@@ -172,25 +181,22 @@ class FaceProcessor:
             if frame is None or frame.size == 0:
                 return None
 
-            # Usa DeepFace com detector_backend='mtcnn' para garantir alinhamento igual ao treino
             embedding_objs = DeepFace.represent(
                 img_path=frame,  # imagem completa (array numpy)
                 model_name=self.EMBEDDING_MODEL,
-                detector_backend="mtcnn",  # mesmo detector do treinamento
-                enforce_detection=False,  # não falha se não detectar
-                align=True,  # alinhamento facial
-                normalization="base",  # sem normalização extra (faremos L2 depois)
+                detector_backend="mtcnn",
+                enforce_detection=False,
+                align=True,
+                normalization="base",
             )
 
             if not embedding_objs or len(embedding_objs) == 0:
                 return None
 
-            # Extrai o embedding da primeira face detectada
             embedding = np.array(
                 embedding_objs[0]["embedding"], dtype=np.float32
             ).flatten()
 
-            # Normalização L2 (igual ao treinamento)
             norm = np.linalg.norm(embedding)
             if norm > 0:
                 embedding = embedding / norm
@@ -212,10 +218,9 @@ class FaceProcessor:
 
             best_match = None
             best_similarity = 0.0
-            similarities = {}  # para log
+            similarities = {}
 
             for user_id, user_data in self.embeddings_db.items():
-                # Usa o embedding normalizado pré-calculado
                 known_emb = user_data.get("normalized_embedding")
                 if known_emb is None:
                     continue
@@ -227,12 +232,8 @@ class FaceProcessor:
                     best_similarity = sim
                     best_match = user_id
 
-            # Log detalhado para depuração
             if similarities:
-                # Mostra apenas as top 3 para não poluir muito
-                top3 = sorted(similarities.items(), key=lambda x: x[1], reverse=True)[
-                    :3
-                ]
+                top3 = sorted(similarities.items(), key=lambda x: x[1], reverse=True)[:3]
                 log_msg = "Similaridades: " + ", ".join(
                     [f"{uid}: {sim:.3f}" for uid, sim in top3]
                 )
@@ -257,8 +258,6 @@ class FaceProcessor:
     def detect_faces_fast(self, frame):
         """
         Detecta faces usando o Haar Cascade (rápido) para extrair regiões.
-        Isso é usado apenas para cortar a região e passar para o embedding,
-        mas o embedding em si usará MTCNN novamente (para manter consistência).
         """
         try:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -292,6 +291,148 @@ class FaceProcessor:
             logging.error(f"Erro na detecção rápida: {str(e)}")
             return []
 
+    # ==================== RASTREAMENTO E PRIORIDADE ====================
+    def compute_iou(self, box1, box2):
+        """
+        Calcula Intersection over Union entre duas bounding boxes.
+        Cada box: (x, y, w, h)
+        """
+        x1, y1, w1, h1 = box1
+        x2, y2, w2, h2 = box2
+        left1, right1 = x1, x1 + w1
+        top1, bottom1 = y1, y1 + h1
+        left2, right2 = x2, x2 + w2
+        top2, bottom2 = y2, y2 + h2
+
+        x_left = max(left1, left2)
+        y_top = max(top1, top2)
+        x_right = min(right1, right2)
+        y_bottom = min(bottom1, bottom2)
+
+        if x_right < x_left or y_bottom < y_top:
+            return 0.0
+        intersection = (x_right - x_left) * (y_bottom - y_top)
+        area1 = w1 * h1
+        area2 = w2 * h2
+        union = area1 + area2 - intersection
+        return intersection / union if union > 0 else 0
+
+    def _update_tracking(self, faces_data):
+        """
+        Atualiza o rosto alvo com base nas faces detectadas e regras de prioridade.
+        faces_data: lista de dicionários com 'bbox', 'user_id', 'similarity', 'priority'
+        """
+        if not faces_data:
+            # Nenhuma face detectada
+            if self.tracking['active']:
+                self.tracking['lost_frames'] += 1
+                if self.tracking['lost_frames'] > self.max_lost_frames:
+                    self.tracking['active'] = False
+            return
+
+        if not self.tracking['active']:
+            # Sem alvo: ativa com a primeira face (a que apareceu primeiro)
+            first = faces_data[0]
+            self.tracking.update({
+                'active': True,
+                'bbox': first['bbox'],
+                'user_id': first['user_id'],
+                'similarity': first['similarity'],
+                'priority': first['priority'],
+                'lost_frames': 0,
+                'first_seen': time.time(),
+                'last_seen': time.time(),
+            })
+            return
+
+        # Tem alvo ativo: tenta associar por IOU
+        best_iou = 0
+        best_idx = None
+        for i, face in enumerate(faces_data):
+            iou = self.compute_iou(self.tracking['bbox'], face['bbox'])
+            if iou > best_iou and iou >= self.iou_threshold:
+                best_iou = iou
+                best_idx = i
+
+        if best_idx is not None:
+            # Associou com a mesma pessoa
+            face = faces_data[best_idx]
+            self.tracking.update({
+                'bbox': face['bbox'],
+                'user_id': face['user_id'],
+                'similarity': face['similarity'],
+                'priority': face['priority'],
+                'lost_frames': 0,
+                'last_seen': time.time(),
+            })
+            # Remove a face associada da lista para não ser considerada como nova
+            faces_data.pop(best_idx)
+        else:
+            # Não associou: incrementa perda
+            self.tracking['lost_frames'] += 1
+            if self.tracking['lost_frames'] > self.max_lost_frames:
+                self.tracking['active'] = False
+                return
+
+        # Verifica se alguma face restante tem prioridade maior (cadastrado)
+        if self.tracking['priority'] != 'registered':
+            for face in faces_data:
+                if face['priority'] == 'registered':
+                    # Troca o alvo para o rosto cadastrado
+                    self.tracking.update({
+                        'active': True,
+                        'bbox': face['bbox'],
+                        'user_id': face['user_id'],
+                        'similarity': face['similarity'],
+                        'priority': 'registered',
+                        'lost_frames': 0,
+                        'first_seen': time.time(),
+                        'last_seen': time.time(),
+                    })
+                    break
+
+    def _draw_target(self, frame):
+        """
+        Desenha o retângulo e informações do rosto alvo.
+        """
+        if not self.tracking['active']:
+            return
+        x, y, w, h = self.tracking['bbox']
+        user_id = self.tracking['user_id']
+        sim = self.tracking['similarity']
+
+        if user_id:
+            info = self.get_user_info(user_id)
+            nome = f"{info['nome']} {info['sobrenome']}".strip()
+            label = f"{nome} ({sim:.1%})"
+            color = (0, 255, 0)
+        else:
+            label = f"Não identificado ({sim:.1%})"
+            color = (0, 0, 255)
+
+        # Retângulo ao redor da face
+        cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+
+        # Fundo para o texto
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        text_bg_y1 = max(y - th - 10, 0)
+        cv2.rectangle(frame, (x, text_bg_y1), (x + tw + 10, y), color, -1)
+
+        # Texto do nome
+        cv2.putText(
+            frame,
+            label,
+            (x + 5, y - 5),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (255, 255, 255),
+            1,
+        )
+
+        # Barra de confiança
+        bar_width = int(w * sim)
+        cv2.rectangle(frame, (x, y + h + 5), (x + bar_width, y + h + 10), color, -1)
+
     # ==================== PROCESSAMENTO DO FRAME ====================
     def process_frame(self, frame):
         """
@@ -305,109 +446,54 @@ class FaceProcessor:
             display_frame = frame.copy()
             current_time = time.time()
 
-            # Controle de taxa de processamento
+            # Controle de taxa de processamento (DeepFace é pesado)
             if current_time - self.last_processed_time < self.processing_interval:
+                # Apenas desenha o último alvo conhecido (se houver)
+                if self.tracking['active']:
+                    self._draw_target(display_frame)
                 return display_frame
 
             self.last_processed_time = current_time
 
-            # Se o modelo não foi carregado, apenas desenha aviso e processa expressões (se ativo)
-            if not self.model_loaded:
-                cv2.putText(
-                    display_frame,
-                    "SISTEMA SEM TREINAMENTO",
-                    (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (0, 0, 255),
-                    2,
-                )
-                if self.enable_expression_analysis:
-                    display_frame, _ = self.process_expressions(display_frame)
-                return display_frame
+            # 1. Detecta faces (rápido) para obter bounding boxes
+            faces_bbox = self.detect_faces_fast(frame)
+            faces_data = []
 
-            # Detecta faces (rápido) para obter regiões de interesse
-            faces = self.detect_faces_fast(frame)
-
-            # Processa expressões (opcional) - apenas atualiza resultados, não desenha
-            if self.enable_expression_analysis:
-                display_frame, _ = self.process_expressions(display_frame)
-
-            if not faces:
-                return display_frame
-
-            for face in faces:
-                x, y, w, h = face["x"], face["y"], face["w"], face["h"]
-
-                # Extrai região do rosto
-                face_region = frame[y : y + h, x : x + w]
+            # 2. Para cada face, extrai embedding e tenta reconhecer
+            for bbox in faces_bbox:
+                x, y, w, h = bbox['x'], bbox['y'], bbox['w'], bbox['h']
+                face_region = frame[y:y + h, x:x + w]
                 if face_region.size == 0:
                     continue
 
-                # Gera embedding (agora com MTCNN + DeepFace)
-                live_emb = self.safe_get_embedding(
-                    frame
-                )  # passamos o frame completo para detecção consistente
-                # Nota: safe_get_embedding usará MTCNN em toda a imagem, o que pode encontrar a mesma face.
-                # Para evitar processar múltiplas vezes, poderíamos usar a região, mas aí perderíamos o alinhamento.
-                # Vamos manter assim: safe_get_embedding já detecta a face principal, então se houver várias,
-                # ele pode retornar o embedding da primeira. Para múltiplas faces, precisaríamos de um loop,
-                # mas em catraca normalmente só há uma pessoa. Se quiser suportar várias, seria necessário modificar.
+                # Gera embedding (usando MTCNN no frame completo)
+                embedding = self.safe_get_embedding(frame)
+                user_id = None
+                similarity = 0.0
+                if embedding is not None and self.model_loaded:
+                    user_id, similarity = self.recognize_face(embedding)
 
-                if live_emb is None:
-                    label = "Analisando..."
-                    color = (0, 255, 255)  # Amarelo
-                else:
-                    user_id, similarity = self.recognize_face(live_emb)
+                faces_data.append({
+                    'bbox': (x, y, w, h),
+                    'user_id': user_id,
+                    'similarity': similarity,
+                    'priority': 'registered' if user_id else 'unknown'
+                })
 
-                    if user_id:
-                        user_info = self.get_user_info(user_id)
-                        nome_completo = (
-                            f"{user_info['nome']} {user_info['sobrenome']}".strip()
-                        )
-                        label = f"{nome_completo} ({similarity:.1%})"
-                        color = (0, 255, 0)  # Verde
+            # 3. Atualiza rastreamento com base nas faces detectadas
+            self._update_tracking(faces_data)
 
-                        # Barra de confiança
-                        bar_width = int(w * similarity)
-                        cv2.rectangle(
-                            display_frame,
-                            (x, y + h + 5),
-                            (x + bar_width, y + h + 10),
-                            color,
-                            -1,
-                        )
-                    else:
-                        label = f"Não identificado ({similarity:.1%})"
-                        color = (0, 0, 255)  # Vermelho
+            # 4. Processa expressões APENAS para o rosto alvo
+            if self.tracking['active'] and self.enable_expression_analysis:
+                x, y, w, h = self.tracking['bbox']
+                face_roi = frame[y:y + h, x:x + w]
+                if face_roi.size > 0:
+                    _, expr_results = self.process_expressions(face_roi)
+                    self.expression_results = expr_results
 
-                # Desenha retângulo ao redor da face
-                cv2.rectangle(display_frame, (x, y), (x + w, y + h), color, 2)
-
-                # Fundo para o texto
-                (text_w, text_h), _ = cv2.getTextSize(
-                    label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1
-                )
-                text_bg_y1 = max(y - text_h - 10, 0)
-                text_bg_y2 = y
-                cv2.rectangle(
-                    display_frame,
-                    (x, text_bg_y1),
-                    (x + text_w + 10, text_bg_y2),
-                    color,
-                    -1,
-                )
-
-                # Texto do nome
-                cv2.putText(
-                    display_frame,
-                    label,
-                    (x + 5, y - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (255, 255, 255),  # branco
-                    1,
-                )
+            # 5. Desenha informações do alvo na tela
+            if self.tracking['active']:
+                self._draw_target(display_frame)
 
             return display_frame
 
@@ -416,13 +502,13 @@ class FaceProcessor:
             return frame
 
     # ==================== EXPRESSÕES (OPCIONAL) ====================
-    def process_expressions(self, frame):
+    def process_expressions(self, face_roi):
         """
-        Processa expressões faciais (apenas se ativado).
-        Retorna o frame inalterado e os resultados.
+        Processa expressões faciais na região do rosto (ROI).
+        Retorna o ROI inalterado e os resultados.
         """
-        if not self.enable_expression_analysis:
-            return frame, {}
+        if not self.enable_expression_analysis or face_roi is None or face_roi.size == 0:
+            return face_roi, {}
 
         try:
             current_time = time.time()
@@ -430,16 +516,16 @@ class FaceProcessor:
                 current_time - self.last_expression_analysis
                 < self.expression_analysis_interval
             ):
-                return frame, self.expression_results
+                return face_roi, self.expression_results
 
             self.last_expression_analysis = current_time
-            results = self.expression_analyzer.analyze_expressions(frame)
+            results = self.expression_analyzer.analyze_expressions(face_roi)
             self.expression_results = results
-            return frame, results
+            return face_roi, results
 
         except Exception as e:
             logging.debug(f"Erro na análise de expressões: {str(e)}")
-            return frame, {}
+            return face_roi, {}
 
     # ==================== CONSULTA AO BANCO ====================
     def get_user_info(self, user_id):

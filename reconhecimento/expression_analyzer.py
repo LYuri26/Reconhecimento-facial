@@ -1,4 +1,4 @@
-# expression_analyzer.py - VERSÃO CORRIGIDA COM DETECÇÃO PRECISA DE EMOÇÕES
+# expression_analyzer.py - VERSÃO OTIMIZADA COM SUPORTE A ROI E SUAVIZAÇÃO MELHORADA
 import cv2
 import numpy as np
 import dlib
@@ -8,7 +8,6 @@ import time
 from deepface import DeepFace
 import os
 from collections import deque, Counter
-
 
 class ExpressionAnalyzer:
     def __init__(
@@ -29,7 +28,7 @@ class ExpressionAnalyzer:
             "jaw": list(range(0, 17)),
         }
 
-        # Configurações para cansaço/tristeza (mantidas iguais)
+        # Configurações para cansaço/tristeza
         self.EYE_AR_THRESH = 0.25
         self.MOUTH_AR_THRESH = 0.35
         self.EAR_CONSEC_FRAMES = 3
@@ -40,7 +39,10 @@ class ExpressionAnalyzer:
         # Histórico para análise temporal e suavização
         self.expression_history = []
         self.history_size = 30
-        self.emotion_buffer = deque(maxlen=5)  # buffer para suavizar emoções
+        self.emotion_buffer = deque(maxlen=5)          # buffer para suavizar emoção dominante
+        self.emotion_scores_buffer = {                 # buffer para suavizar scores individuais
+            emotion: deque(maxlen=5) for emotion in ["angry","disgust","fear","happy","sad","surprise","neutral"]
+        }
 
         # Emoções básicas
         self.emotions = [
@@ -53,26 +55,29 @@ class ExpressionAnalyzer:
             "neutral",
         ]
 
-        logging.info("Analisador de expressões e emoções inicializado")
+        # Cache simples para evitar reanálise da mesma imagem (último hash)
+        self.last_frame_hash = None
+        self.last_analysis_time = 0
+        self.cache_duration = 0.5  # segundos
 
-    # ---------- NOVO MÉTODO: EXTRAIR REGIÃO DA FACE ----------
-    def _extract_face_region(self, frame, face_rect):
-        """Extrai e redimensiona a região da face baseado no retângulo do dlib."""
-        if face_rect is None:
+        logging.info("Analisador de expressões e emoções inicializado (modo ROI)")
+
+    # ---------- EXTRAIR REGIÃO DA FACE A PARTIR DE BBOX ----------
+    def _extract_face_region(self, frame, bbox, padding=0.2):
+        """
+        Extrai e redimensiona a região da face baseado na bounding box.
+        bbox: (x, y, w, h) em coordenadas do frame original.
+        """
+        if bbox is None:
             return None
-        x, y, w, h = (
-            face_rect.left(),
-            face_rect.top(),
-            face_rect.width(),
-            face_rect.height(),
-        )
+        x, y, w, h = bbox
         # Expande um pouco para incluir testa e queixo
-        padding = int(0.2 * w)
-        x = max(0, x - padding)
-        y = max(0, y - padding)
-        w = min(frame.shape[1] - x, w + 2 * padding)
-        h = min(frame.shape[0] - y, h + 2 * padding)
-        face_img = frame[y : y + h, x : x + w]
+        pad = int(padding * w)
+        x = max(0, x - pad)
+        y = max(0, y - pad)
+        w = min(frame.shape[1] - x, w + 2 * pad)
+        h = min(frame.shape[0] - y, h + 2 * pad)
+        face_img = frame[y:y+h, x:x+w]
         if face_img.size == 0:
             return None
         # Redimensiona para tamanho mínimo (224x224) se necessário
@@ -80,9 +85,26 @@ class ExpressionAnalyzer:
             face_img = cv2.resize(face_img, (224, 224))
         return face_img
 
-    # ---------- MÉTODO MODIFICADO: DETECTAR LANDMARKS E RETORNAR RECT ----------
+    # ---------- DETECTAR LANDMARKS USANDO BBOX (SE FORNECIDA) ----------
+    def detect_landmarks_from_bbox(self, frame, bbox):
+        """
+        Detecta landmarks usando a bounding box fornecida (já detectada por Haar Cascade).
+        Retorna (landmarks, face_rect) ou (None, None) em caso de falha.
+        """
+        try:
+            x, y, w, h = bbox
+            # Cria um retângulo dlib a partir da bbox
+            face_rect = dlib.rectangle(left=x, top=y, right=x+w, bottom=y+h)
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            landmarks = self.predictor(gray, face_rect)
+            return landmarks, face_rect
+        except Exception as e:
+            logging.debug(f"Erro ao detectar landmarks a partir de bbox: {str(e)}")
+            return None, None
+
+    # ---------- DETECTAR LANDMARKS (MÉTODO ORIGINAL, USADO QUANDO NÃO HÁ BBOX) ----------
     def detect_landmarks(self, frame):
-        """Detecta landmarks e retorna (landmarks, face_rect)."""
+        """Detecta landmarks no frame completo."""
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = self.detector(gray)
         if len(faces) == 0:
@@ -91,14 +113,26 @@ class ExpressionAnalyzer:
         landmarks = self.predictor(gray, face_rect)
         return landmarks, face_rect
 
-    # ---------- MÉTODO MODIFICADO: ANÁLISE DE EMOÇÕES COM FACE RECORTADA ----------
+    # ---------- ANÁLISE DE EMOÇÕES BÁSICAS (COM SUAVIZAÇÃO) ----------
     def analyze_basic_emotions(self, face_img):
-        """Analisa emoções básicas usando DeepFace em uma imagem de rosto recortada."""
+        """
+        Analisa emoções básicas usando DeepFace em uma imagem de rosto recortada.
+        Retorna dicionário com emoção dominante, scores suavizados e confiança.
+        """
         try:
             if face_img is None or face_img.size == 0:
                 return None
 
-            # Usa DeepFace diretamente com o array numpy, detector_backend='mtcnn' para maior precisão
+            # Cache simples: se a imagem não mudou significativamente, retorna último resultado
+            current_hash = hash(face_img.tobytes())
+            if (current_hash == self.last_frame_hash and 
+                time.time() - self.last_analysis_time < self.cache_duration):
+                # Retorna o último resultado suavizado (evita chamadas repetidas)
+                return self._get_smoothed_emotion_result()
+
+            self.last_frame_hash = current_hash
+            self.last_analysis_time = time.time()
+
             analysis = DeepFace.analyze(
                 img_path=face_img,
                 actions=["emotion"],
@@ -113,28 +147,50 @@ class ExpressionAnalyzer:
                 emotion_scores = {
                     emotion: emotion_data.get(emotion, 0) for emotion in self.emotions
                 }
-                confidence = max(emotion_scores.values()) if emotion_scores else 0
 
-                # Suavização temporal: adiciona ao buffer e retorna a moda
+                # Atualiza buffers de suavização
                 self.emotion_buffer.append(dominant_emotion)
-                if len(self.emotion_buffer) == self.emotion_buffer.maxlen:
-                    # Pega a emoção mais frequente no buffer
-                    most_common = Counter(self.emotion_buffer).most_common(1)[0][0]
-                    dominant_emotion = most_common
+                for emotion, score in emotion_scores.items():
+                    self.emotion_scores_buffer[emotion].append(score)
 
-                return {
-                    "dominant_emotion": dominant_emotion,
-                    "emotion_scores": emotion_scores,
-                    "confidence": confidence,
-                }
+                return self._get_smoothed_emotion_result()
             return None
         except Exception as e:
             logging.debug(f"Erro na análise de emoções básicas: {str(e)}")
             return None
 
-    # ---------- MÉTODO MODIFICADO: ANALISAR EXPRESSÕES ----------
-    def analyze_expressions(self, frame):
-        """Analisa todas as expressões faciais e emoções, usando a face recortada para emoções."""
+    def _get_smoothed_emotion_result(self):
+        """Retorna resultado de emoção suavizado a partir dos buffers."""
+        # Emoção dominante suavizada (moda)
+        if len(self.emotion_buffer) > 0:
+            dominant_emotion = Counter(self.emotion_buffer).most_common(1)[0][0]
+        else:
+            dominant_emotion = "neutral"
+
+        # Scores suavizados (média móvel)
+        emotion_scores = {}
+        for emotion in self.emotions:
+            buffer = self.emotion_scores_buffer[emotion]
+            if len(buffer) > 0:
+                emotion_scores[emotion] = sum(buffer) / len(buffer)
+            else:
+                emotion_scores[emotion] = 0.0
+
+        confidence = max(emotion_scores.values()) if emotion_scores else 0
+
+        return {
+            "dominant_emotion": dominant_emotion,
+            "emotion_scores": emotion_scores,
+            "confidence": confidence,
+        }
+
+    # ---------- MÉTODO PRINCIPAL: ANALISAR EXPRESSÕES (ACEITA BBOX OPCIONAL) ----------
+    def analyze_expressions(self, frame, bbox=None):
+        """
+        Analisa todas as expressões faciais e emoções.
+        Se bbox for fornecido, usa-o para localizar a face e landmarks,
+        evitando redetecção completa.
+        """
         results = {
             "basic_emotions": {
                 "dominant_emotion": "neutral",
@@ -146,12 +202,21 @@ class ExpressionAnalyzer:
             "landmarks": None,
         }
 
-        # Detecta landmarks e obtém o retângulo da face
-        landmarks, face_rect = self.detect_landmarks(frame)
+        landmarks = None
+        face_rect = None
+
+        # Se bbox foi fornecido, tenta obter landmarks diretamente
+        if bbox is not None:
+            landmarks, face_rect = self.detect_landmarks_from_bbox(frame, bbox)
+
+        # Se não conseguiu com bbox ou não foi fornecido, tenta detecção completa
+        if landmarks is None:
+            landmarks, face_rect = self.detect_landmarks(frame)
+
         if landmarks is not None:
             results["landmarks"] = landmarks
 
-            # Analisa expressões específicas (cansaço, tristeza) - mantido igual
+            # Analisa expressões específicas (cansaço, tristeza)
             fatigue_score, fatigue_indicators = self.analyze_fatigue(landmarks)
             sadness_score, sadness_indicators = self.analyze_sadness(landmarks)
 
@@ -167,13 +232,20 @@ class ExpressionAnalyzer:
             }
 
             # Extrai a região da face para análise de emoções
-            face_img = self._extract_face_region(frame, face_rect)
+            if face_rect is not None:
+                # Usa o retângulo do dlib (pode ser ligeiramente diferente da bbox original)
+                dlib_bbox = (face_rect.left(), face_rect.top(), 
+                             face_rect.width(), face_rect.height())
+            else:
+                dlib_bbox = bbox  # fallback
+
+            face_img = self._extract_face_region(frame, dlib_bbox)
             if face_img is not None:
                 emotion_results = self.analyze_basic_emotions(face_img)
                 if emotion_results:
                     results["basic_emotions"] = emotion_results
         else:
-            # Fallback: se não detectar face com dlib, tenta DeepFace no frame inteiro (menos preciso)
+            # Fallback: tenta DeepFace no frame inteiro (menos preciso)
             emotion_results = self.analyze_basic_emotions(frame)
             if emotion_results:
                 results["basic_emotions"] = emotion_results
@@ -183,9 +255,7 @@ class ExpressionAnalyzer:
 
         return results
 
-    # ---------- MÉTODOS INALTERADOS (analyze_fatigue, analyze_sadness, etc.) ----------
-    # ... (mantenha os métodos abaixo exatamente como estavam) ...
-
+    # ---------- MÉTODOS DE ANÁLISE DE FATIGUE E SADNESS (INALTERADOS) ----------
     def eye_aspect_ratio(self, eye):
         A = dist.euclidean(eye[1], eye[5])
         B = dist.euclidean(eye[2], eye[4])
@@ -348,7 +418,7 @@ class ExpressionAnalyzer:
         return emojis.get(emotion, "😐")
 
     def draw_analysis(self, frame, results):
-        """Desenha a análise completa no frame (mantido igual)."""
+        """Desenha a análise completa no frame (mantido para compatibilidade)."""
         if results["landmarks"] is not None:
             landmarks = results["landmarks"]
             for i in range(68):
