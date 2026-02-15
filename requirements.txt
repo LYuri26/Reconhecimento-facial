@@ -26,3 +26,6 @@ tensorflow==2.15.0
 tf-keras==2.15.1
 keras==2.15.0
 mtcnn==0.1.1
+
+# Adicionado dlib para landmarks e expressões
+dlib==19.24.2

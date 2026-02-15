@@ -44,7 +44,7 @@ class Database
             if ($stmt->rowCount() == 0) {
                 // Cria o banco de dados
                 self::$pdo->exec("CREATE DATABASE " . DB_NAME . " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
-                echo "Banco de dados criado com sucesso!<br>";
+                // Removido o echo
             }
 
             // Seleciona o banco de dados
@@ -86,7 +86,7 @@ class Database
 
                     // Executa a criação da tabela
                     self::$pdo->exec($query);
-                    echo "Tabela $table criada com sucesso!<br>";
+                    // Removido o echo
                 }
             }
         } catch (PDOException $e) {

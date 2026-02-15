@@ -205,50 +205,53 @@ def executar_treinamento():
 
 
 def executar_reconhecimento():
-    """Função para iniciar reconhecimento facial"""
+    """Função para iniciar reconhecimento facial usando subprocess (mais confiável)"""
     print("Iniciando reconhecimento facial...")
 
-    try:
-        # Primeiro, verificar se estamos no ambiente virtual
-        from reconhecimento.recognize_faces import FaceRecognizer
+    setup = VenvSetup()
+    python_path, _ = setup.get_venv_python()
 
-        recognizer = FaceRecognizer()
-        recognizer.run()
-
-        print("✓ Reconhecimento facial finalizado")
-        return True
-
-    except ImportError as e:
-        print(f"✗ Erro ao importar módulos: {e}")
-        print("Verifique se todas as dependências estão instaladas")
-
-        # Tentar uma solução alternativa: executar via subprocess usando o Python do venv
-        try:
-            setup = VenvSetup()
-            python_path, _ = setup.get_venv_python()
-
-            if python_path.exists():
-                print("Tentando executar com Python do venv...")
-                script_path = (
-                    Path(__file__).resolve().parent
-                    / "reconhecimento"
-                    / "recognize_faces.py"
-                )
-                cmd = f'"{python_path}" "{script_path}"'
-
-                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-                if result.returncode == 0:
-                    print("✓ Reconhecimento executado com sucesso via subprocess")
-                    return True
-                else:
-                    print(f"✗ Erro no subprocess: {result.stderr}")
-
-        except Exception as sub_e:
-            print(f"✗ Falha na execução alternativa: {sub_e}")
-
+    if not python_path.exists():
+        print(f"✗ Python do venv não encontrado em: {python_path}")
         return False
+
+    script_path = setup.script_dir / "reconhecimento" / "recognize_faces.py"
+    if not script_path.exists():
+        print(f"✗ Script de reconhecimento não encontrado: {script_path}")
+        return False
+
+    try:
+        # Comando para executar o script com o Python do venv
+        cmd = f'"{python_path}" "{script_path}"'
+        print(f"Executando: {cmd}")
+
+        process = subprocess.Popen(
+            cmd,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True,
+        )
+
+        # Mostrar saída em tempo real
+        for line in process.stdout:
+            line = line.strip()
+            if line:
+                print(line)
+
+        process.wait()
+
+        if process.returncode == 0:
+            print("✓ Reconhecimento facial finalizado com sucesso")
+            return True
+        else:
+            print(f"✗ Erro na execução do reconhecimento (código {process.returncode})")
+            return False
+
     except Exception as e:
-        print(f"✗ Erro ao executar reconhecimento: {e}")
+        print(f"✗ Exceção ao executar reconhecimento: {e}")
         return False
 
 
