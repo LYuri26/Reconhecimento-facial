@@ -14,7 +14,7 @@ class CameraManager:
         self.width = width
         self.height = height
         self.target_fps = target_fps
-        self.frame_skip = 2
+        self.frame_skip = 10
         self.frame_queue = queue.Queue(maxsize=3)
         self.running = False
         self.camera_initialized = False
@@ -94,10 +94,14 @@ class CameraManager:
                 "tcp",
                 "-timeout",
                 "5000000",
+                "-fflags",
+                "nobuffer",  # adicionado
+                "-flags",
+                "low_delay",  # adicionado
                 "-i",
                 self.rtsp_url,
                 "-loglevel",
-                "info",  # Mais informações para debug
+                "error",  # reduz logs
                 "-f",
                 "rawvideo",
                 "-pix_fmt",
@@ -108,7 +112,6 @@ class CameraManager:
                 str(self.target_fps),
                 "-",
             ]
-
             logging.info(f"Iniciando FFmpeg com comando: {' '.join(ffmpeg_cmd)}")
             self.proc = subprocess.Popen(
                 ffmpeg_cmd,

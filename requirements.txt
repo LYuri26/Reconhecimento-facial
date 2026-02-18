@@ -14,7 +14,7 @@ tqdm==4.66.1
 gdown==4.7.1
 retrying==1.3.4
 
-# Banco de Dados (versão compatível)
+# Banco de Dados
 mysql-connector-python==8.0.33
 
 # Stack científica
@@ -30,12 +30,15 @@ tf-keras==2.15.1
 # Reconhecimento Facial
 deepface==0.0.79
 mtcnn==0.1.1
+
+# Use a versão mais recente do dlib com wheel para Linux/Python 3.10
+# Se a instalação falhar, tente: pip install dlib==19.22.0
 dlib==19.24.2
 
 # Gestos / Mãos
 mediapipe==0.10.9
 
-# Dependência crítica
+# Dependência crítica (compatível com TensorFlow)
 protobuf==3.20.3
 
 # Visualização

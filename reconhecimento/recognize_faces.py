@@ -86,9 +86,9 @@ class FaceRecognizer:
         self.rtsp_url = (
             "rtsp://admin:Evento0128@192.168.1.101:559/Streaming/Channels/101"
         )
-        self.width = 640
-        self.height = 480
-        self.target_fps = 15
+        self.width = 320
+        self.height = 240
+        self.target_fps = 10
 
         self.camera_manager = CameraManager(
             self.rtsp_url, self.width, self.height, self.target_fps
@@ -107,7 +107,7 @@ class FaceRecognizer:
         # --- Modo alerta (janela de tempo para gesto) ---
         self.alert_mode_active = False
         self.alert_mode_start_time = 0
-        self.alert_mode_duration = 20  # segundos após a última emoção crítica
+        self.alert_mode_duration = 60  # segundos após a última emoção crítica
 
         self.running = False
         self.window_created = False
@@ -344,7 +344,10 @@ class FaceRecognizer:
             # --- Mensagem de alerta de gesto (central) com persistência ---
             if self.gesture_alert:
                 current_time = time.time()
-                if current_time - self.gesture_alert_start_time < self.gesture_alert_duration:
+                if (
+                    current_time - self.gesture_alert_start_time
+                    < self.gesture_alert_duration
+                ):
                     cv2.putText(
                         frame,
                         "GESTO DE ALERTA!",
@@ -375,12 +378,18 @@ class FaceRecognizer:
             if confidence > 0.8:
                 if dominant_emotion == "angry":
                     alert_key = "emotion_angry"
-                    if current_time - self.last_alert_time.get(alert_key, 0) > self.alert_cooldown:
+                    if (
+                        current_time - self.last_alert_time.get(alert_key, 0)
+                        > self.alert_cooldown
+                    ):
                         alerts.append("🚨 EMOCAO FORTE: RAIVA")
                         self.last_alert_time[alert_key] = current_time
                 elif dominant_emotion == "fear":
                     alert_key = "emotion_fear"
-                    if current_time - self.last_alert_time.get(alert_key, 0) > self.alert_cooldown:
+                    if (
+                        current_time - self.last_alert_time.get(alert_key, 0)
+                        > self.alert_cooldown
+                    ):
                         alerts.append("🚨 EMOCAO FORTE: MEDO")
                         self.last_alert_time[alert_key] = current_time
 
@@ -388,7 +397,10 @@ class FaceRecognizer:
             fatigue_score = expression_results.get("fatigue", {}).get("score", 0)
             if fatigue_level == "Alto" and fatigue_score > 0.7:
                 alert_key = "fatigue_high"
-                if current_time - self.last_alert_time.get(alert_key, 0) > self.alert_cooldown:
+                if (
+                    current_time - self.last_alert_time.get(alert_key, 0)
+                    > self.alert_cooldown
+                ):
                     alerts.append("🚨 CANSACO ELEVADO")
                     self.last_alert_time[alert_key] = current_time
 
@@ -473,10 +485,9 @@ class FaceRecognizer:
                         self.face_processor.tracking["active"]
                         and self.face_processor.expression_results
                     ):
-                        dominant = (
-                            self.face_processor.expression_results.get("basic_emotions", {})
-                            .get("dominant_emotion", "")
-                        )
+                        dominant = self.face_processor.expression_results.get(
+                            "basic_emotions", {}
+                        ).get("dominant_emotion", "")
                         print(f"DEBUG: Emoção atual = {dominant}")
                         if dominant in ["angry", "fear", "sad"]:
                             # Ativa/renova o modo alerta
@@ -490,21 +501,35 @@ class FaceRecognizer:
 
                     # Verifica se o modo alerta expirou
                     if self.alert_mode_active:
-                        if current_time - self.alert_mode_start_time > self.alert_mode_duration:
+                        if (
+                            current_time - self.alert_mode_start_time
+                            > self.alert_mode_duration
+                        ):
                             self.alert_mode_active = False
                             print("DEBUG: Modo alerta EXPIRADO")
 
                     # --- Detecção de gestos condicional ---
                     # Ativa se (modo alerta ativo) OU (emoção atual crítica)
                     ativar_gesto = False
-                    if self.face_processor.tracking["active"] and self.face_processor.expression_results:
+                    if (
+                        self.face_processor.tracking["active"]
+                        and self.face_processor.expression_results
+                    ):
                         # Se está em modo alerta ou a emoção atual é crítica
-                        if self.alert_mode_active or dominant in ["angry", "fear", "sad"]:
+                        if self.alert_mode_active or dominant in [
+                            "angry",
+                            "fear",
+                            "sad",
+                        ]:
                             ativar_gesto = True
 
                     if ativar_gesto:
-                        print("DEBUG: Detecção de gesto ATIVADA (modo alerta ou emoção crítica)")
-                        gesture_detected, annotated_frame = self.gesture_detector.detect_gesture(frame)
+                        print(
+                            "DEBUG: Detecção de gesto ATIVADA (modo alerta ou emoção crítica)"
+                        )
+                        gesture_detected, annotated_frame = (
+                            self.gesture_detector.detect_gesture(frame)
+                        )
                         if gesture_detected:
                             self.gesture_alert = True
                             self.gesture_alert_start_time = time.time()
@@ -653,6 +678,7 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"❌ ERRO INICIAL: {str(e)}")
         import traceback
+
         traceback.print_exc()
     finally:
         print("=" * 60)

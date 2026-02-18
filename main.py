@@ -3,6 +3,7 @@ import sys
 import subprocess
 import venv
 import argparse
+import shutil
 from pathlib import Path
 
 
@@ -12,6 +13,34 @@ class VenvSetup:
         self.script_dir = Path(__file__).resolve().parent
         self.venv_path = self.script_dir / self.venv_name
         self.requirements_file = self.script_dir / "requirements.txt"
+
+    def check_system_dependencies(self):
+        """Verifica se as dependências de sistema para compilar dlib estão instaladas."""
+        required_commands = ["cmake", "g++", "make"]
+        missing_commands = [cmd for cmd in required_commands if not shutil.which(cmd)]
+        if missing_commands:
+            print("❌ Dependências de sistema ausentes:")
+            for cmd in missing_commands:
+                print(f"   - {cmd}")
+            print("\nPara instalar no Ubuntu/Debian, execute:")
+            print("  sudo apt update")
+            print("  sudo apt install build-essential cmake pkg-config \\")
+            print("                   libx11-dev libatlas-base-dev \\")
+            print("                   libboost-python-dev libboost-thread-dev \\")
+            print("                   libboost-system-dev libboost-filesystem-dev")
+            return False
+
+        # Verifica se os cabeçalhos do Boost estão acessíveis (opcional, mas útil)
+        boost_check = subprocess.run(
+            "dpkg -l | grep libboost-dev", shell=True, capture_output=True, text=True
+        )
+        if boost_check.returncode != 0:
+            print(
+                "⚠️  Biblioteca Boost não encontrada. A compilação do dlib pode falhar."
+            )
+            print("   Instale com: sudo apt install libboost-all-dev")
+            # Não retornamos False aqui porque talvez a wheel funcione sem boost
+        return True
 
     def create_venv(self):
         """Cria o ambiente virtual se não existir"""
@@ -36,12 +65,41 @@ class VenvSetup:
         else:
             python_path = self.venv_path / "bin" / "python"
             activate_path = self.venv_path / "bin" / "activate"
-
         return python_path, activate_path
 
+    def run_pip_with_env(self, cmd, env=None):
+        """Executa um comando pip com ambiente personalizado e retorna (returncode, dlib_failed, output_lines)."""
+        my_env = os.environ.copy()
+        if env:
+            my_env.update(env)
+        process = subprocess.Popen(
+            cmd,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True,
+            env=my_env,
+        )
+        output_lines = []
+        dlib_failed_local = False
+        for line in process.stdout:
+            line = line.strip()
+            if line:
+                print(line)
+                output_lines.append(line)
+                if (
+                    "Failed building wheel for dlib" in line
+                    or "ERROR: Failed building wheel for dlib" in line
+                ):
+                    dlib_failed_local = True
+        process.wait()
+        return process.returncode, dlib_failed_local, output_lines
+
     def install_requirements(self):
-        """Instala as dependências do requirements.txt"""
-        python_path, activate_path = self.get_venv_python()
+        """Instala as dependências com fallback inteligente para dlib."""
+        python_path, _ = self.get_venv_python()
 
         if not python_path.exists():
             print(f"✗ Python do venv não encontrado em: {python_path}")
@@ -51,60 +109,84 @@ class VenvSetup:
             print(f"✗ Arquivo {self.requirements_file} não encontrado")
             return False
 
-        try:
-            print("Instalando dependências do requirements.txt...")
-            print("Isso pode levar alguns minutos...")
+        # 1. Tentativa normal (sem variável de ambiente)
+        print("Instalando dependências do requirements.txt...")
+        print("Isso pode levar alguns minutos...")
+        cmd = f'"{python_path}" -m pip install -r "{self.requirements_file}"'
+        returncode, dlib_failed, _ = self.run_pip_with_env(cmd)
 
-            # Comando para instalar requirements
-            if sys.platform == "win32":
-                cmd = f'"{python_path}" -m pip install -r "{self.requirements_file}"'
-            else:
-                cmd = f'"{python_path}" -m pip install -r "{self.requirements_file}"'
+        if returncode == 0:
+            print("✓ Todas as dependências instaladas com sucesso")
+            return True
 
-            # Executar com saída em tempo real
-            process = subprocess.Popen(
-                cmd,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                universal_newlines=True,
+        # 2. Se falhou por causa do dlib, tenta com a variável CMAKE_POLICY_VERSION_MINIMUM
+        if dlib_failed:
+            print(
+                "\n⚠️  Falha na instalação do dlib. Tentando com CMAKE_POLICY_VERSION_MINIMUM=3.5..."
             )
 
-            # Ler saída em tempo real
-            line_count = 0
-            for line in process.stdout:
-                line = line.strip()
-                if line:
-                    print(line)
-                    sys.stdout.flush()
-                    line_count += 1
+            env_fix = {"CMAKE_POLICY_VERSION_MINIMUM": "3.5"}
 
-                    # Mostrar progresso a cada 10 linhas
-                    if line_count % 10 == 0:
-                        print(f"Processando... ({line_count} pacotes processados)")
+            # Tenta instalar apenas o dlib com a variável
+            dlib_cmd = f'"{python_path}" -m pip install --no-cache-dir dlib==19.24.2'
+            ret2, fail2, _ = self.run_pip_with_env(dlib_cmd, env_fix)
 
-            process.wait()
-
-            if process.returncode == 0:
-                print("✓ Todas as dependências instaladas com sucesso")
+            if ret2 == 0:
+                print(
+                    "✓ dlib 19.24.2 instalado com sucesso (com variável de ambiente)!"
+                )
+                # Agora instala o restante (ignorando dlib, pois já está instalado)
+                print("Instalando os demais pacotes...")
+                # Cria um requirements temporário sem o dlib
+                temp_req = self.script_dir / "requirements_temp.txt"
+                with open(self.requirements_file, "r") as f:
+                    lines = [line for line in f if not line.strip().startswith("dlib")]
+                with open(temp_req, "w") as f:
+                    f.writelines(lines)
+                subprocess.run(
+                    f'"{python_path}" -m pip install -r "{temp_req}"', shell=True
+                )
+                temp_req.unlink()
                 return True
             else:
-                print("✗ Erro ao instalar requirements")
-                return False
-
-        except subprocess.TimeoutExpired:
-            print("✗ Timeout ao instalar dependências")
-            return False
-        except Exception as e:
-            print(f"✗ Erro durante a instalação: {e}")
+                print("⚠️  Falha também com a variável. Tentando versão 19.22.0...")
+                dlib_cmd_old = (
+                    f'"{python_path}" -m pip install --no-cache-dir dlib==19.22.0'
+                )
+                ret3, fail3, _ = self.run_pip_with_env(dlib_cmd_old, env_fix)
+                if ret3 == 0:
+                    print("✓ dlib 19.22.0 instalado com sucesso!")
+                    # Instala os demais pacotes
+                    temp_req = self.script_dir / "requirements_temp.txt"
+                    with open(self.requirements_file, "r") as f:
+                        lines = [
+                            line for line in f if not line.strip().startswith("dlib")
+                        ]
+                    with open(temp_req, "w") as f:
+                        f.writelines(lines)
+                    subprocess.run(
+                        f'"{python_path}" -m pip install -r "{temp_req}"', shell=True
+                    )
+                    temp_req.unlink()
+                    return True
+                else:
+                    print("✗ Falha também na instalação do dlib 19.22.0.")
+                    print(
+                        "Certifique-se de que as dependências de sistema estão instaladas."
+                    )
+                    return False
+        else:
+            print("✗ Erro ao instalar requirements (não relacionado ao dlib)")
             return False
 
     def setup(self):
         """Configura o ambiente completo"""
         print("Iniciando configuração do ambiente...")
         print("=" * 50)
+
+        # Verifica dependências de sistema (apenas Linux)
+        if sys.platform != "win32" and not self.check_system_dependencies():
+            return False
 
         # Criar venv
         if not self.create_venv():
@@ -298,5 +380,4 @@ def main():
 
 
 if __name__ == "__main__":
-    exit_code = main()
-    sys.exit(exit_code)
+    sys.exit(main())

@@ -5,18 +5,21 @@ import numpy as np
 import time
 import logging
 
+
 class GestureDetector:
     """
     Detecta o gesto de punho cerrado (mão aberta → polegar dobrado → dedos fechando → punho)
-    usando MediaPipe Hands. Implementa uma máquina de estados com parâmetros ajustáveis.
+    usando MediaPipe Hands. Implementa uma máquina de estados com timeouts de 60 segundos
+    por etapa. A perda da mão não reseta o estado; apenas pausa a progressão.
     """
+
     def __init__(self, min_detection_confidence=0.5, min_tracking_confidence=0.5):
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
             static_image_mode=False,
             max_num_hands=1,
             min_detection_confidence=min_detection_confidence,
-            min_tracking_confidence=min_tracking_confidence
+            min_tracking_confidence=min_tracking_confidence,
         )
         self.mp_draw = mp.solutions.drawing_utils
 
@@ -45,20 +48,22 @@ class GestureDetector:
         self.pinky_mcp = 17
         self.wrist = 0
 
-        # Limiares MAIS BAIXOS (mais tolerantes)
-        self.OPEN_THRESHOLD = 0.2          # antes 0.15
-        self.THUMB_FOLD_THRESHOLD = 0.2    # aumentado de 0.15 para 0.2
-        self.CLOSING_THRESHOLD = 0.18      # antes 0.12
-        self.FIST_THRESHOLD = 0.15         # antes 0.1
-        self.FINGER_SEPARATION = 0.02      # antes 0.05 (quase qualquer separação)
+        # Limiares ajustados para maior tolerância
+        self.OPEN_THRESHOLD = 0.2
+        self.THUMB_FOLD_THRESHOLD = 0.2
+        self.CLOSING_THRESHOLD = 0.2  # aumentado de 0.18 para 0.2
+        self.FIST_THRESHOLD = 0.12  # reduzido de 0.15 para 0.12
+        self.FINGER_SEPARATION = 0.02
 
-        # Timeouts MAIORES para dar tempo de fazer o gesto
-        self.timeout_open = 5.0    # aumentado de 2.0 para 5.0 segundos
-        self.timeout_thumb = 3.0   # aumentado de 1.5 para 3.0 segundos
-        self.timeout_closing = 3.0 # aumentado de 1.5 para 3.0 segundos
+        # Timeouts de 60 segundos para cada etapa (exceto o último)
+        self.timeout_open = 60.0
+        self.timeout_thumb = 60.0
+        self.timeout_closing = 60.0
         self.timeout_fist = 0.5
 
-        logging.info("GestureDetector inicializado com MediaPipe Hands (timeouts longos)")
+        logging.info(
+            "GestureDetector inicializado com MediaPipe Hands (timeouts de 60s por etapa)"
+        )
 
     def _distance(self, p1, p2):
         """Distância euclidiana entre dois landmarks (coordenadas normalizadas)."""
@@ -107,28 +112,43 @@ class GestureDetector:
         tips = [self.index_tip, self.middle_tip, self.ring_tip, self.pinky_tip]
         closed_count = 0
         for tip in tips:
-            if self._distance(landmarks.landmark[tip], palm_base) < self.CLOSING_THRESHOLD:
+            if (
+                self._distance(landmarks.landmark[tip], palm_base)
+                < self.CLOSING_THRESHOLD
+            ):
                 closed_count += 1
         return closed_count >= 3
 
     def _is_fist(self, landmarks):
         """
-        Verifica se a mão está fechada em punho:
+        Verifica se a mão está fechada em punho de forma mais tolerante:
         - Todos os dedos (indicador, médio, anelar, mínimo) estão com pontas próximas à palma
         - Polegar está por dentro (ponta próxima à base do indicador)
+        Usa um limiar mais baixo e verifica a média das distâncias.
         """
         palm_base = landmarks.landmark[self.middle_mcp]
         tips = [self.index_tip, self.middle_tip, self.ring_tip, self.pinky_tip]
-        all_closed = True
-        for tip in tips:
-            if self._distance(landmarks.landmark[tip], palm_base) > self.FIST_THRESHOLD:
-                all_closed = False
-                break
+        distances = [self._distance(landmarks.landmark[tip], palm_base) for tip in tips]
+        avg_distance = np.mean(distances)
+        max_distance = max(distances)
 
+        # Condição: a média e o máximo das distâncias estão abaixo do limiar
+        if avg_distance > self.FIST_THRESHOLD * 1.5:  # tolerância extra
+            return False
+
+        # Polegar por dentro: ponta do polegar próxima à base do indicador
         thumb_tip = landmarks.landmark[self.thumb_tip]
         index_mcp = landmarks.landmark[self.index_mcp]
-        thumb_inside = self._distance(thumb_tip, index_mcp) < self.FIST_THRESHOLD
-        return all_closed and thumb_inside
+        thumb_distance = self._distance(thumb_tip, index_mcp)
+
+        if thumb_distance > self.FIST_THRESHOLD * 2:
+            return False
+
+        # Debug opcional (pode ser comentado)
+        print(
+            f"DEBUG FIST: avg_dist={avg_distance:.3f}, max_dist={max_distance:.3f}, thumb_dist={thumb_distance:.3f}"
+        )
+        return True
 
     def detect_gesture(self, frame):
         """
@@ -141,16 +161,18 @@ class GestureDetector:
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = self.hands.process(rgb)
 
+        current_time = time.time()
+
         if results.multi_hand_landmarks:
             hand_landmarks = results.multi_hand_landmarks[0]
-            self.mp_draw.draw_landmarks(annotated_frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
+            self.mp_draw.draw_landmarks(
+                annotated_frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS
+            )
 
-            current_time = time.time()
-
-            # Máquina de estados com prints de debug
+            # Máquina de estados (progressão)
             if self.state == self.STATE_IDLE:
                 if self._is_hand_open(hand_landmarks):
-                    print("DEBUG: Mão aberta detectada")
+                    print("DEBUG: Mão aberta detectada - início do gesto")
                     self.state = self.STATE_HAND_OPEN
                     self.state_start_time = current_time
             elif self.state == self.STATE_HAND_OPEN:
@@ -182,9 +204,13 @@ class GestureDetector:
                 if current_time - self.state_start_time > self.timeout_fist:
                     self.reset()
         else:
+            # Mão não detectada: NÃO reseta o estado, apenas informa (opcional)
             if self.state != self.STATE_IDLE:
-                print("DEBUG: Mão perdida, reset")
-                self.reset()
+                # Mantém o estado, o timeout continuará contando
+                print(
+                    "DEBUG: Mão perdida, mas estado mantido. Tempo restante ainda conta."
+                )
+                # Não faz nada, apenas aguarda a mão voltar
 
         if gesture_complete:
             now = time.time()

@@ -42,7 +42,7 @@ class FaceProcessor:
 
         # OTIMIZAÇÕES DE PERFORMANCE
         self.last_processed_time = 0
-        self.processing_interval = 0.5  # Intervalo entre processamentos (0.5s)
+        self.processing_interval = 1.0  # Intervalo entre processamentos (0.5s)
         self.min_face_size = 80
         self.face_cache = {}  # Cache de embeddings para performance
         self.cache_timeout = 30  # segundos
@@ -59,17 +59,17 @@ class FaceProcessor:
 
         # ========== RASTREAMENTO DE UM ÚNICO ROSTO ==========
         self.tracking = {
-            'active': False,           # Há um rosto sendo rastreado?
-            'bbox': None,               # (x, y, w, h) da última detecção
-            'user_id': None,            # ID do usuário se reconhecido
-            'similarity': 0.0,           # Similaridade do reconhecimento
-            'priority': None,            # 'registered' ou 'unknown'
-            'lost_frames': 0,            # Número de frames sem detecção
-            'first_seen': 0,              # Timestamp da primeira aparição
-            'last_seen': 0,               # Timestamp da última atualização
+            "active": False,  # Há um rosto sendo rastreado?
+            "bbox": None,  # (x, y, w, h) da última detecção
+            "user_id": None,  # ID do usuário se reconhecido
+            "similarity": 0.0,  # Similaridade do reconhecimento
+            "priority": None,  # 'registered' ou 'unknown'
+            "lost_frames": 0,  # Número de frames sem detecção
+            "first_seen": 0,  # Timestamp da primeira aparição
+            "last_seen": 0,  # Timestamp da última atualização
         }
-        self.max_lost_frames = 30        # Perde o rastreamento após 30 frames sem detecção
-        self.iou_threshold = 0.3          # IOU mínimo para associar ao mesmo rosto
+        self.max_lost_frames = 30  # Perde o rastreamento após 30 frames sem detecção
+        self.iou_threshold = 0.3  # IOU mínimo para associar ao mesmo rosto
 
         # Carrega o modelo na inicialização
         self.load_model()
@@ -233,7 +233,9 @@ class FaceProcessor:
                     best_match = user_id
 
             if similarities:
-                top3 = sorted(similarities.items(), key=lambda x: x[1], reverse=True)[:3]
+                top3 = sorted(similarities.items(), key=lambda x: x[1], reverse=True)[
+                    :3
+                ]
                 log_msg = "Similaridades: " + ", ".join(
                     [f"{uid}: {sim:.3f}" for uid, sim in top3]
                 )
@@ -324,32 +326,34 @@ class FaceProcessor:
         """
         if not faces_data:
             # Nenhuma face detectada
-            if self.tracking['active']:
-                self.tracking['lost_frames'] += 1
-                if self.tracking['lost_frames'] > self.max_lost_frames:
-                    self.tracking['active'] = False
+            if self.tracking["active"]:
+                self.tracking["lost_frames"] += 1
+                if self.tracking["lost_frames"] > self.max_lost_frames:
+                    self.tracking["active"] = False
             return
 
-        if not self.tracking['active']:
+        if not self.tracking["active"]:
             # Sem alvo: ativa com a primeira face (a que apareceu primeiro)
             first = faces_data[0]
-            self.tracking.update({
-                'active': True,
-                'bbox': first['bbox'],
-                'user_id': first['user_id'],
-                'similarity': first['similarity'],
-                'priority': first['priority'],
-                'lost_frames': 0,
-                'first_seen': time.time(),
-                'last_seen': time.time(),
-            })
+            self.tracking.update(
+                {
+                    "active": True,
+                    "bbox": first["bbox"],
+                    "user_id": first["user_id"],
+                    "similarity": first["similarity"],
+                    "priority": first["priority"],
+                    "lost_frames": 0,
+                    "first_seen": time.time(),
+                    "last_seen": time.time(),
+                }
+            )
             return
 
         # Tem alvo ativo: tenta associar por IOU
         best_iou = 0
         best_idx = None
         for i, face in enumerate(faces_data):
-            iou = self.compute_iou(self.tracking['bbox'], face['bbox'])
+            iou = self.compute_iou(self.tracking["bbox"], face["bbox"])
             if iou > best_iou and iou >= self.iou_threshold:
                 best_iou = iou
                 best_idx = i
@@ -357,49 +361,53 @@ class FaceProcessor:
         if best_idx is not None:
             # Associou com a mesma pessoa
             face = faces_data[best_idx]
-            self.tracking.update({
-                'bbox': face['bbox'],
-                'user_id': face['user_id'],
-                'similarity': face['similarity'],
-                'priority': face['priority'],
-                'lost_frames': 0,
-                'last_seen': time.time(),
-            })
+            self.tracking.update(
+                {
+                    "bbox": face["bbox"],
+                    "user_id": face["user_id"],
+                    "similarity": face["similarity"],
+                    "priority": face["priority"],
+                    "lost_frames": 0,
+                    "last_seen": time.time(),
+                }
+            )
             # Remove a face associada da lista para não ser considerada como nova
             faces_data.pop(best_idx)
         else:
             # Não associou: incrementa perda
-            self.tracking['lost_frames'] += 1
-            if self.tracking['lost_frames'] > self.max_lost_frames:
-                self.tracking['active'] = False
+            self.tracking["lost_frames"] += 1
+            if self.tracking["lost_frames"] > self.max_lost_frames:
+                self.tracking["active"] = False
                 return
 
         # Verifica se alguma face restante tem prioridade maior (cadastrado)
-        if self.tracking['priority'] != 'registered':
+        if self.tracking["priority"] != "registered":
             for face in faces_data:
-                if face['priority'] == 'registered':
+                if face["priority"] == "registered":
                     # Troca o alvo para o rosto cadastrado
-                    self.tracking.update({
-                        'active': True,
-                        'bbox': face['bbox'],
-                        'user_id': face['user_id'],
-                        'similarity': face['similarity'],
-                        'priority': 'registered',
-                        'lost_frames': 0,
-                        'first_seen': time.time(),
-                        'last_seen': time.time(),
-                    })
+                    self.tracking.update(
+                        {
+                            "active": True,
+                            "bbox": face["bbox"],
+                            "user_id": face["user_id"],
+                            "similarity": face["similarity"],
+                            "priority": "registered",
+                            "lost_frames": 0,
+                            "first_seen": time.time(),
+                            "last_seen": time.time(),
+                        }
+                    )
                     break
 
     def _draw_target(self, frame):
         """
         Desenha o retângulo e informações do rosto alvo.
         """
-        if not self.tracking['active']:
+        if not self.tracking["active"]:
             return
-        x, y, w, h = self.tracking['bbox']
-        user_id = self.tracking['user_id']
-        sim = self.tracking['similarity']
+        x, y, w, h = self.tracking["bbox"]
+        user_id = self.tracking["user_id"]
+        sim = self.tracking["similarity"]
 
         if user_id:
             info = self.get_user_info(user_id)
@@ -449,7 +457,7 @@ class FaceProcessor:
             # Controle de taxa de processamento (DeepFace é pesado)
             if current_time - self.last_processed_time < self.processing_interval:
                 # Apenas desenha o último alvo conhecido (se houver)
-                if self.tracking['active']:
+                if self.tracking["active"]:
                     self._draw_target(display_frame)
                 return display_frame
 
@@ -461,8 +469,8 @@ class FaceProcessor:
 
             # 2. Para cada face, extrai embedding e tenta reconhecer
             for bbox in faces_bbox:
-                x, y, w, h = bbox['x'], bbox['y'], bbox['w'], bbox['h']
-                face_region = frame[y:y + h, x:x + w]
+                x, y, w, h = bbox["x"], bbox["y"], bbox["w"], bbox["h"]
+                face_region = frame[y : y + h, x : x + w]
                 if face_region.size == 0:
                     continue
 
@@ -473,26 +481,28 @@ class FaceProcessor:
                 if embedding is not None and self.model_loaded:
                     user_id, similarity = self.recognize_face(embedding)
 
-                faces_data.append({
-                    'bbox': (x, y, w, h),
-                    'user_id': user_id,
-                    'similarity': similarity,
-                    'priority': 'registered' if user_id else 'unknown'
-                })
+                faces_data.append(
+                    {
+                        "bbox": (x, y, w, h),
+                        "user_id": user_id,
+                        "similarity": similarity,
+                        "priority": "registered" if user_id else "unknown",
+                    }
+                )
 
             # 3. Atualiza rastreamento com base nas faces detectadas
             self._update_tracking(faces_data)
 
             # 4. Processa expressões APENAS para o rosto alvo
-            if self.tracking['active'] and self.enable_expression_analysis:
-                x, y, w, h = self.tracking['bbox']
-                face_roi = frame[y:y + h, x:x + w]
+            if self.tracking["active"] and self.enable_expression_analysis:
+                x, y, w, h = self.tracking["bbox"]
+                face_roi = frame[y : y + h, x : x + w]
                 if face_roi.size > 0:
                     _, expr_results = self.process_expressions(face_roi)
                     self.expression_results = expr_results
 
             # 5. Desenha informações do alvo na tela
-            if self.tracking['active']:
+            if self.tracking["active"]:
                 self._draw_target(display_frame)
 
             return display_frame
@@ -507,7 +517,11 @@ class FaceProcessor:
         Processa expressões faciais na região do rosto (ROI).
         Retorna o ROI inalterado e os resultados.
         """
-        if not self.enable_expression_analysis or face_roi is None or face_roi.size == 0:
+        if (
+            not self.enable_expression_analysis
+            or face_roi is None
+            or face_roi.size == 0
+        ):
             return face_roi, {}
 
         try:
